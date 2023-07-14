@@ -1,41 +1,64 @@
 library(tidyverse)
 library(tidycensus)
 
-##Demographic variables
-demo_var_list <- c(
+vars <- load_variables(2021, "acs5")
+bg_vars <- filter(vars, geography == "block group")
+tract_vars <- filter(vars, geography == "tract") |>
+  left_join(bg_vars, join_by(label, concept))
+
+bg_var_list <-c(
   paste0("B01001_00", c(1, 3:6)),
   paste0("B01001_0", 27:30),
   paste0("B02001_00", 2:3),
   "B03002_012",
-  "B03002_013",
-  "B11005_001",
-  "B11005_002",
-  "B19049_001",
-  paste0("C16002_00", 2:9),
-  paste0("C16002_0", 10:14)
-)
-
-## Variables needed for deprivation index
-di_vars <- c(
-  "B01001_001", 
-  "B17001_001",
-  "B17001_002", 
-  "B19013_001", 
-  paste0('B15003_0',17:25),
+  paste0("B11005_00", 1:2),
   "B15003_001",
-  paste0('B27010_0',c(17, 33, 50, 66)),
-  "B19058_001",
-  "B19058_002",
-  "B25001_001",
-  "B25002_003"
-)
+  paste0("B15003_0", 17:25),
+  paste0("B16004_00", c(1, 3, 7, 8)),
+  paste0("B16004_0", c(12, 13, 17, 18, 22, 23, 25, 29, 30, 34, 35, 39, 
+                       40, 44, 45, 47, 51, 52, 56, 57, 61, 62, 66, 67)),
+  paste0("B17010_00", 1:2),
+  "B19049_001",
+  paste0("B25002_00", c(1, 3)),
+  paste0("B27010_0", c(17, 33, 50, 66))
+  )
+
+#tract_var_list <- c("B19058_001", "B19058_002")
+
+cat_frame <- data.frame(
+  variable = sort(c(bg_var_list, "B19058_002")),
+  category = c(
+    "Population",
+    rep("Children", 8),
+    "White",
+    "Black",
+    "Hispanic",
+    "Households",
+    "HHWithChildren",
+    "Age25",
+    rep("HighSchool", 9),
+    "Age5",
+    "English",
+    rep("LimitedEnglish", 8),
+    "English",
+    rep("LimitedEnglish", 8),
+    "English",
+    rep("LimitedEnglish", 8),
+    "PovertyTotal",
+    "Poverty",
+    "MedianHHIncome",
+    "Assistance",
+    "HousingUnits",
+    "Vacant",
+    rep("Uninsured", 4)
+    )
+  )
 
 ## List of census tract deprivation indexes
 di <- read.csv(
   "deprivation index all tracts 2021.csv",
   colClasses = c("numeric", "character", rep("numeric", 6))
   )
-
 
 ## Allocation of Hamilton County census block groups
 allocations <- read.csv(
@@ -132,11 +155,87 @@ for (i in 1:nrow(oki)){
 }
 oki$GEOID <- paste0(oki$CountyCode, oki$Tract)
 
-vars <- load_variables(2021, "acs5")
+hamco_bg <- get_acs(
+  geography = "block group",
+  variables = bg_var_list,
+  county = "Hamilton",
+  state = "OH"
+  ) |>
+  inner_join(cat_frame) |>
+  group_by(GEOID, category) |>
+  summarise(estimate = sum(estimate)) |>
+  pivot_wider(
+    id_cols = GEOID,
+    names_from = category,
+    values_from = estimate
+  ) |>
+  mutate(Income = MedianHHIncome*Households) |>
+  inner_join(allocations, multiple = "all") |>
+  mutate(across(c(Age25:LimitedEnglish, Population:Income), \(x) x*Allocation))
+
+hood_inc <- hamco_bg |>
+  filter(
+    Municipality == "Cincinnati",
+    !is.na(Income)
+    ) |>
+  group_by(Neighborhood) |>
+  summarise(
+    Income = sum(Income),
+    HH = sum(Households)
+    ) |>
+  mutate(MedianHHIncome = Income/HH)
+
+cinci_hood <- filter(hamco_bg, Municipality == "Cincinnati") |>
+  ungroup() |>
+  select(Age25:LimitedEnglish, Population:White, Municipality, Neighborhood) |>
+  group_by(Municipality, Neighborhood) |>
+  summarise(across(Age25:White, sum)) |>
+  left_join(hood_inc)
+
+hh_tract <- filter(hamco_bg, Municipality == "Cincinnati") |>
+  mutate(Tract = str_trunc(GEOID, 11, "right", ellipsis = "")) |>
+  group_by(Tract, Neighborhood) |>
+  summarise(Households = sum(Households)) |>
+  group_by(Tract) |>
+  mutate(
+    TractHH = sum(Households),
+    Allocation = Households/TractHH
+    )
+
+hood_assistance <- get_acs(
+  geography = "tract",
+  variables = "B19058_002",
+  county = "Hamilton",
+  state = "OH"
+  ) |>
+  inner_join(
+    select(hh_tract, -Households), 
+    by = c("GEOID" = "Tract"),
+    multiple = "all"
+    ) |>
+  mutate(
+    Assistance = estimate*Allocation,
+    HH = TractHH*Allocation
+    ) |>
+  group_by(Neighborhood) |>
+  summarise(
+    Assistance = sum(Assistance),
+    HH = sum(HH),
+    AssistanceRate = Assistance/HH,
+    Assistance = round(Assistance, 0)
+  ) |>
+  select(Neighborhood, Assistance, AssistanceRate)
+
+cinci_hood <- inner_join(cinci_hood, hood_assistance) |>
+  mutate(
+    County = "Hamilton",
+    State = "Ohio"
+    ) |>
+  select(-c(HH, Income))
 
 oh_cs <- get_acs(
   geography = "county subdivision",
-  variables = unique(c(demo_var_list, di_vars)),
+  variables = c(bg_var_list, "B19058_002"),
   state = "OH",
   county = c("Clermont", "Warren", "Butler", "Hamilton"),
   year = 2021
@@ -144,7 +243,7 @@ oh_cs <- get_acs(
 
 ky_cs <- get_acs(
   geography = "county subdivision",
-  variables = unique(c(demo_var_list, di_vars)),
+  variables = c(bg_var_list, "B19058_002"),
   state = "KY",
   county = c("Boone", "Campbell", "Kenton"),
   year = 2021
@@ -152,7 +251,7 @@ ky_cs <- get_acs(
 
 in_cs <- get_acs(
   geography = "county subdivision",
-  variables = unique(c(demo_var_list, di_vars)),
+  variables = c(bg_var_list, "B19058_002"),
   state = "IN",
   county = "Dearborn",
   year = 2021
@@ -160,43 +259,7 @@ in_cs <- get_acs(
 
 oki_cs <- rbind(oh_cs, ky_cs) |>
   rbind(in_cs) |>
-  mutate(
-    Category = case_when(
-      variable == "B01001_001" ~ "Total",
-      str_detect(variable, "B01001_0") ~ "Children",
-      variable == "B02001_002" ~ "White",
-      variable == "B02001_003" ~ "Black",
-      variable == "B03002_012" ~ "Hispanic",
-      variable == "B03002_013" ~ "WhiteHispanic",
-      variable == "B11005_001" ~ "Households",
-      variable == "B11005_002" ~ "ChildHH",
-      variable == "B19049_001" ~ "MedianHHIncome", 
-      variable == "C16002_002" ~ "English",
-      variable == "C16002_003" ~ "Spanish",
-      variable == "C16002_004" ~ "SpanishLtd",
-      variable == "C16002_005" ~ "SpanishUL",
-      variable == "C16002_006" ~ "IE",
-      variable == "C16002_007" ~ "IELtd",
-      variable == "C16002_008" ~ "IEUL",
-      variable == "C16002_009" ~ "Asian",
-      variable == "C16002_010" ~ "AsianLtd",
-      variable == "C16002_011" ~ "AsianUL",
-      variable == "C16002_012" ~ "Other",
-      variable == "C16002_013" ~ "OtherLtd",
-      variable == "C16002_014" ~ "OtherUL",
-      variable == "B17001_001" ~ "PovertyPop",
-      variable == "B17001_002" ~ "Poverty",
-      variable == "B19013_001" ~ "MedianHHIncome",
-      variable == "B15003_001" ~ "AtLeast25",
-      str_detect(variable, "B15003_0") ~ "HighSchool",
-      str_detect(variable, "B27010_0") ~ "Uninsured",
-      variable == "B19058_001" ~ "Households",
-      variable == "B19058_002" ~ "PublicAssistance",
-      variable == "B25001_001" ~ "HousingUnits",
-      variable == "B25002_003" ~ "Vacant",
-      TRUE ~ NA
-    )
-  ) |>
+  inner_join(cat_frame) |>
   separate_wider_delim(
     NAME, 
     delim = ", ", 
@@ -220,11 +283,11 @@ oki_cs <- rbind(oh_cs, ky_cs) |>
     estimate > 0
     )
 
-cs_income <- filter(oki_cs, Category %in% c("MedianHHIncome", "Households")) |>
-  distinct(GEOID, Municipality, County, State, estimate, Category) |>
+cs_income <- filter(oki_cs, category %in% c("MedianHHIncome", "Households")) |>
+  distinct(GEOID, Municipality, County, State, estimate, category) |>
   pivot_wider(
     id_cols = c(GEOID, County, State, Municipality),
-    names_from = Category,
+    names_from = category,
     values_from = estimate
   ) |>
   mutate(Income = MedianHHIncome*Households) |>
@@ -235,34 +298,48 @@ cs_income <- filter(oki_cs, Category %in% c("MedianHHIncome", "Households")) |>
     ) |>
   mutate(MedianHHIncome = Income/Households) |>
   filter(!is.na(MedianHHIncome)) |>
-  select(Municipality, County, State, MedianHHIncome)
+  select(-Income)
   
-cs_demo <- filter(oki_cs, Category != "MedianHHIncome") |>
-  distinct(GEOID, Municipality, County, State, estimate, Category) |>
-  group_by(Municipality, County, State, Category) |>
+cs_demo <- filter(oki_cs, category != "MedianHHIncome") |>
+  distinct(GEOID, Municipality, County, State, estimate, category) |>
+  group_by(Municipality, County, State, category) |>
   summarise(estimate = sum(estimate)) |>
   pivot_wider(
     id_cols = c(Municipality, County, State),
-    names_from = Category,
+    names_from = category,
     values_from = estimate,
     values_fill = 0
   ) |>
-  mutate(
-    NonEnglishHH = (Households-English)/Households,
-    LimitedEnglishHH = (SpanishLtd+AsianLtd+IELtd+OtherLtd)/Households,
-    HighSchoolRate = HighSchool/AtLeast25,
-    BlackRate = Black/Total,
-    ChildHHRate = ChildHH/Households,
-    ChildRate = Children/Total,
-    HispanicRate = Hispanic/Total,
-    VacancyRate = Vacant/HousingUnits,
-    PovertyRate = Poverty/PovertyPop,
-    PublicAssistanceRate = PublicAssistance/Households,
-    UninsuredRate = Uninsured/Total,
-    NonHispanicWhiteRate = (White-WhiteHispanic)/Total
-    ) |>
   left_join(cs_income) |>
-  select(Municipality, State, County, NonEnglishHH:MedianHHIncome, Total)
+  mutate(AssistanceRate = Assistance/Households,
+         Neighborhood = NA) |>
+  rbind(cinci_hood) |>
+  mutate(
+    HighSchoolRate = HighSchool/Age25,
+    OtherLanguage = Age5-English,
+    OtherLanguageRate = OtherLanguage/Age5,
+    BlackRate = Black/Population,
+    ChildRate = Children/Population,
+    ChildHHRate = HHWithChildren/Households,
+    HispanicRate = Hispanic/Population,
+    VacancyRate = Vacant/HousingUnits,
+    LimitedEnglishRate = LimitedEnglish/Population,
+    PovertyRate = Poverty/PovertyTotal,
+    UninsuredRate = Uninsured/Population,
+    WhiteRate = White/Population,
+    across(Age25:MedianHHIncome, round)
+    ) |>
+  select(State, County, Municipality, Neighborhood, Population, 
+         Black, BlackRate, Hispanic, HispanicRate, 
+         Children, ChildRate, UninsuredRate, WhiteRate, 
+         Households, HHWithChildren, ChildHHRate, 
+         Assistance, AssistanceRate, MedianHHIncome,
+         Age5, OtherLanguage, OtherLanguageRate, 
+         LimitedEnglish, LimitedEnglishRate,
+         Age25, HighSchool, HighSchoolRate,
+         PovertyTotal, Poverty, PovertyRate,
+         HousingUnits, Vacant, VacancyRate
+         )
 
 oh_tract <- get_acs(
   geography = "tract",
@@ -309,116 +386,28 @@ cs_di <- rbind(oh_tract, ky_tract) |>
     TractShare = Population/TownPop,
     DIWeight = TractShare*dep_index
     ) |>
-  summarise(DeprivationIndex = sum(DIWeight)) |>
-  full_join(cs_demo) |>
-  mutate(Neighborhood = NA)
-  
-hamco_bg <- get_acs(
-  geography = "block group",
-  variables = unique(c(demo_var_list), di_vars),
-  state = "OH",
-  county = "Hamilton",
-  year = 2021
-  ) |>
-  mutate(
-    Description = case_when(
-      variable == "B01001_001" ~ "Total",
-      str_detect(variable, "B01001_0") ~ "Children",
-      variable == "B02001_002" ~ "White",
-      variable == "B02001_003" ~ "Black",
-      variable == "B03002_012" ~ "Hispanic",
-      variable == "B03002_013" ~ "WhiteHispanic",
-      variable == "B11005_001" ~ "Households",
-      variable == "B11005_002" ~ "ChildHH",
-      variable == "B19049_001" ~ "MedianHHIncome", 
-      variable == "C16002_002" ~ "English",
-      variable == "C16002_003" ~ "Spanish",
-      variable == "C16002_004" ~ "SpanishLtd",
-      variable == "C16002_005" ~ "SpanishUL",
-      variable == "C16002_006" ~ "IE",
-      variable == "C16002_007" ~ "IELtd",
-      variable == "C16002_008" ~ "IEUL",
-      variable == "C16002_009" ~ "Asian",
-      variable == "C16002_010" ~ "AsianLtd",
-      variable == "C16002_011" ~ "AsianUL",
-      variable == "C16002_012" ~ "Other",
-      variable == "C16002_013" ~ "OtherLtd",
-      variable == "C16002_014" ~ "OtherUL",
-      variable == "B17001_001" ~ "PovertyPop",
-      variable == "B17001_002" ~ "Poverty",
-      variable == "B19013_001" ~ "MedianHHIncome",
-      variable == "B15003_001" ~ "AtLeast25",
-      str_detect(variable, "B15003_0") ~ "HighSchool",
-      str_detect(variable, "B27010_0") ~ "Uninsured",
-      variable == "B19058_001" ~ "Households",
-      variable == "B19058_002" ~ "PublicAssistance",
-      variable == "B25001_001" ~ "HousingUnits",
-      variable == "B25002_003" ~ "Vacant",
-      TRUE ~ NA
-    )
-  ) |>
-  group_by(GEOID, Description) |>
-  summarise(value = sum(estimate)) |>
-  pivot_wider(
-    id_cols = GEOID,
-    names_from = Description,
-    values_from = value
-    ) 
+  summarise(DeprivationIndex = sum(DIWeight))
 
-cinci_hood <- select(hamco_bg, -MedianHHIncome) |>
-  inner_join(filter(allocations, Municipality == "Cincinnati")) |>
-  mutate(across(Asian:WhiteHispanic, \(x) x*Allocation)) |>
-  group_by(Neighborhood) |>
-  summarise(across(Asian:WhiteHispanic, sum)) |>
-  mutate(
-    NonEnglishHH = (Households-English)/Households,
-    LimitedEnglishHH = (SpanishLtd+IELtd+AsianLtd+OtherLtd)/Households,
-    NonHispanicWhiteRate = (White-WhiteHispanic)/Total,
-    BlackRate = Black/Total,
-    ChildHHRate = ChildHH/Households,
-    ChildRate = Children/Total,
-    HispanicRate = Hispanic/Total,
-  ) |>
-  select(Neighborhood, NonEnglishHH:HispanicRate, Total)
-
-cinci_di <- select(hamco_bg, GEOID, Total) |>
-  inner_join(allocations, multiple = "all") |>
-  filter(Municipality == "Cincinnati") |>
-  mutate(
-    census_tract_fips = str_trunc(GEOID, 11, "right", ellipsis = ""),
-    Population = Total*Allocation
-  ) |>
-  left_join(di) |>
-  filter(!is.na(dep_index)) |>
-  group_by(census_tract_fips, Neighborhood) |>
-  mutate(TractPop = sum(Population)) |>
-  group_by(Neighborhood) |>
+hood_di <- filter(hamco_bg, Municipality == "Cincinnati") |>
+  mutate(census_tract_fips = str_trunc(GEOID, 11, "right", ellipsis = "")) |>
+  group_by(census_tract_fips, Neighborhood, Municipality) |>
+  summarise(Population = sum(Population)) |>
+  group_by(Municipality, Neighborhood) |>
   mutate(
     HoodPop = sum(Population),
-    TractShare = TractPop/HoodPop
-  ) |>
-  distinct(census_tract_fips, Neighborhood, TractShare) |>
-  inner_join(di, multiple = "all") |>
-  mutate(across(dep_index:fraction_vacant_housing, \(x) x*TractShare)) |>
-  group_by(Neighborhood) |>
-  summarise(across(dep_index:fraction_vacant_housing, sum)) |>
+    TractWeight = Population/HoodPop
+    ) |>
+  inner_join(di) |>
+  mutate(DIWeight = TractWeight*dep_index) |>
+  summarise(DeprivationIndex = sum(DIWeight)) |>
   mutate(
     County = "Hamilton",
     State = "Ohio"
-  ) |>
-  rename(
-    DeprivationIndex = dep_index,
-    PublicAssistanceRate = fraction_assisted_income,
-    HighSchoolRate = fraction_high_school_edu,
-    MedianHHIncome = median_income,
-    UninsuredRate = fraction_no_health_ins,
-    PovertyRate = fraction_poverty,
-    VacancyRate = fraction_vacant_housing
-  ) |>
-  inner_join(cinci_hood) |>
-  mutate(Municipality = "Cincinnati")
+    ) |>
+  rbind(cs_di)
 
-all <- rbind(cs_di, cinci_di)
+all <- full_join(cs_demo, hood_di)
+
 write_csv(all, "census_data.csv")
 
 

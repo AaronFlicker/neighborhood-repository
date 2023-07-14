@@ -2,6 +2,8 @@ library(tidyverse)
 library(tigris)
 library(leaflet)
 library(sf)
+library(geojsonio)
+library(geojsonsf)
 allocations <- read.csv(
   "~/neighborhood bg allocations.csv",
   colClasses = c(
@@ -93,5 +95,12 @@ oki_lines <- rbind(oh_lines, ky_lines) |>
   mutate(Area = str_to_title(Area)) |>
   rbind(hood_lines) |>
   full_join(all_data) |>
-  arrange(Area)
-write_csv(oki_lines, "for map.csv")
+  arrange(Area) |>
+  st_as_sf()
+
+oki_json <- sf_geojson(oki_lines)
+oki_topo <- sf_ge
+
+
+write(oki_json, "for map.json")
+
