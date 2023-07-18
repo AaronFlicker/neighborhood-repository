@@ -330,8 +330,8 @@ cs_demo <- filter(oki_cs, category != "MedianHHIncome") |>
     across(Age25:MedianHHIncome, round)
     ) |>
   select(State, County, Municipality, Neighborhood, Population, 
-         Black, BlackRate, Hispanic, HispanicRate, 
-         Children, ChildRate, UninsuredRate, WhiteRate, 
+         Black, BlackRate, Hispanic, HispanicRate, White, WhiteRate,
+         Children, ChildRate, Uninsured, UninsuredRate, 
          Households, HHWithChildren, ChildHHRate, 
          Assistance, AssistanceRate, MedianHHIncome,
          Age5, OtherLanguage, OtherLanguageRate, 
