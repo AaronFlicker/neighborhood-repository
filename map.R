@@ -4,6 +4,7 @@ library(leaflet)
 library(sf)
 library(geojsonio)
 library(geojsonsf)
+library(geojsonlint)
 allocations <- read.csv(
   "~/neighborhood bg allocations.csv",
   colClasses = c(
@@ -15,11 +16,110 @@ allocations <- read.csv(
     )
   )
 #oki <- read.csv("oki allocations.csv")
-census <- read.csv("census_data.csv")
+census <- read.csv("census_data.csv") |>
+  mutate(across(Municipality:Neighborhood, \(x) coalesce(x, "All")))
 asthma <- read.csv("asthma.csv")
-all_data <- inner_join(census, asthma) |>
-  mutate(Area = coalesce(Neighborhood, Municipality)) |>
-  select(-Municipality)
+
+asthma_cs <- asthma |>
+  group_by(State, County, Municipality) |>
+  summarise(across(AsthmaRegistry:AsthmaAdmissions, sum)) |>
+  mutate(Neighborhood = "All")
+
+asthma_county <- asthma |>
+  group_by(State, County) |>
+  summarise(across(AsthmaRegistry:AsthmaAdmissions, sum)) |>
+  mutate(
+    Municipality = "All",
+    Neighborhood = "All"
+  )
+
+asthma_total <- asthma |>
+  summarise(across(AsthmaRegistry:AsthmaAdmissions, sum)) |>
+  mutate(
+    County = "All",
+    State = "All",
+    Neighborhood = "All",
+    Municipality = "All"
+  )
+
+all_data <- filter(asthma, Neighborhood != "All") |>
+  rbind(asthma_cs) |>
+  rbind(asthma_county) |>
+  rbind(asthma_total) |>
+  inner_join(census) |>
+  mutate(
+    AsthmaRegistryRate = AsthmaRegistry/Children,
+    AsthmaAdmissionRate = AsthmaAdmissions/Children
+    )
+
+hood_benchmarks <- all_data |>
+  filter(
+    Municipality == "Cincinnati",
+    Neighborhood == "All"
+  ) |>
+  select(c(ends_with("Rate"), Municipality)) |>
+  rename(Area = Municipality)
+
+hoods <- all_data$Neighborhood[all_data$Neighborhood != "All"]
+
+hood_data <- filter(all_data, Neighborhood == hoods[i]) |>
+  select(c(ends_with("Rate"), Neighborhood)) |>
+  rename(Area = Neighborhood) |>
+  rbind(hood_benchmarks) |>
+  pivot_longer(
+    WhiteRate:AsthmaAdmissionRate,
+    names_to = "variable"
+  ) |>
+  mutate(
+    variable = str_remove(variable, "Rate"),
+    variable = factor(variable, levels = c(
+      "AsthmaAdmission", "AsthmaRegistry",
+      "LimitedEnglish", "OtherLanguage", 
+      "Vacancy", "Uninsured", "HighSchool", "Assistance", "Poverty",
+      "Child", "Hispanic", "White", "Black"
+      )
+     ),
+    Area = factor(Area, levels = c("Cincinnati", hoods[i]))
+    )
+
+ggplot(hood_data, aes(x = variable, y = value, fill = Area)) +
+  geom_bar(stat = "identity", position = position_dodge(.9)) +
+  coord_flip() +
+  labs(x = NULL, y = "%", title = hoods[i], fill = NULL) +
+  scale_y_continuous(
+    limits = c(0, 1),
+    breaks = seq(0, 1, .1),
+    labels = seq(0, 100, 10)
+  ) +
+  scale_fill_manual(
+    values = c("darkblue", "lightblue"),
+    breaks = c(hoods[i], "Cincinnati")
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(hjust = .5),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.major.y = element_blank()
+  ) +
+  geom_text(aes(label = round(value*100, 1)), hjust = -.5, size = 3.5, position = position_dodge(.9))
+
+
+
+hood_lines <- block_groups(
+  state = "OH",
+  county = "Hamilton"
+  ) |>
+  inner_join(allocations, multiple = "all") |>
+  filter(Municipality == "Cincinnati") |>
+  group_by(Neighborhood) |>
+  summarise(geometry = st_union(geometry)) |>
+  rename(Area = Neighborhood) |>
+  mutate(
+    State = "Ohio",
+    County = "Hamilton"
+  )
+
 oh_lines <- county_subdivisions(
   state = "OH",
   county = c("Hamilton", "Butler", "Warren", "Clermont")
@@ -76,31 +176,22 @@ in_lines <- county_subdivisions(
   ) |>
   rename(Area = NAMELSAD) |>
   select(State, County, Area, geometry)
-hood_lines <- block_groups(
-  state = "OH",
-  county = "Hamilton"
-  ) |>
-  inner_join(allocations, multiple = "all") |>
-  filter(Municipality == "Cincinnati") |>
-  group_by(Neighborhood) |>
-  summarise(geometry = st_union(geometry)) |>
-  rename(Area = Neighborhood) |>
+
+county_lines <- counties(state = c("OH", "KY", "IN")) |>
+  filter(
+    (NAME %in% c("Hamilton", "Butler", "Clermont", "Warren") & STATEFP == "39") |
+      NAME %in% c("Campbell", "Boone", "Kenton") & STATEFP == "21" |
+      NAME == "Dearborn"
+    ) |>
   mutate(
-    State = "Ohio",
-    County = "Hamilton"
+    State = case_when(
+      STATEFP == "39" ~ "Ohio",
+      STATEFP == "21" ~ "Kentucky",
+      TRUE ~ "Indiana"
     )
-
-oki_lines <- rbind(oh_lines, ky_lines) |>
-  rbind(in_lines) |>
-  mutate(Area = str_to_title(Area)) |>
-  rbind(hood_lines) |>
-  full_join(all_data) |>
-  arrange(Area) |>
-  st_as_sf()
-
-oki_json <- sf_geojson(oki_lines)
-oki_topo <- sf_ge
-
-
-write(oki_json, "for map.json")
+  ) |>
+  rename(Area = NAME) |>
+  select(Area, State)
+  
+metro_data <- filter(all_data, County == "All")
 
