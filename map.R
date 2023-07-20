@@ -1,10 +1,12 @@
 library(tidyverse)
 library(tigris)
 library(leaflet)
+library(leafpop)
 library(sf)
-library(geojsonio)
-library(geojsonsf)
-library(geojsonlint)
+library(leaflegend)
+# library(geojsonio)
+# library(geojsonsf)
+# library(geojsonlint)
 allocations <- read.csv(
   "~/neighborhood bg allocations.csv",
   colClasses = c(
@@ -49,62 +51,230 @@ all_data <- filter(asthma, Neighborhood != "All") |>
   inner_join(census) |>
   mutate(
     AsthmaRegistryRate = AsthmaRegistry/Children,
-    AsthmaAdmissionRate = AsthmaAdmissions/Children
-    )
+    AsthmaAdmissionRate = AsthmaAdmissions/Children,
+    Tier = case_when(
+      DeprivationIndex >= .6 ~ "Highest",
+      DeprivationIndex >= .475 ~ "Higher",
+      DeprivationIndex >= .35 ~ "Medium",
+      DeprivationIndex >= .225 ~ "Lower",
+      TRUE ~ "Lowest"
+    ),
+    Tier = factor(
+      Tier, 
+      levels = c("Lowest", "Lower", "Medium", "Higher", "Highest")
+      )
+  )
 
 hood_benchmarks <- all_data |>
   filter(
     Municipality == "Cincinnati",
     Neighborhood == "All"
   ) |>
-  select(c(ends_with("Rate"), Municipality)) |>
-  rename(Area = Municipality)
-
-hoods <- all_data$Neighborhood[all_data$Neighborhood != "All"]
-
-hood_data <- filter(all_data, Neighborhood == hoods[i]) |>
-  select(c(ends_with("Rate"), Neighborhood)) |>
-  rename(Area = Neighborhood) |>
-  rbind(hood_benchmarks) |>
+  select(c(ends_with("Rate"), MedianHHIncome, DeprivationIndex)) |>
   pivot_longer(
-    WhiteRate:AsthmaAdmissionRate,
+    cols = WhiteRate:DeprivationIndex,
+    names_to = "variable",
+    values_to = "Cincinnati"
+  )
+
+hood_rates <- filter(all_data, Neighborhood != "All") |>
+  select(c(ends_with("Rate"), MedianHHIncome, DeprivationIndex, Neighborhood)) |>
+  pivot_longer(
+    cols = WhiteRate:DeprivationIndex,
     names_to = "variable"
   ) |>
+  left_join(hood_benchmarks) |>
   mutate(
-    variable = str_remove(variable, "Rate"),
-    variable = factor(variable, levels = c(
-      "AsthmaAdmission", "AsthmaRegistry",
-      "LimitedEnglish", "OtherLanguage", 
-      "Vacancy", "Uninsured", "HighSchool", "Assistance", "Poverty",
-      "Child", "Hispanic", "White", "Black"
+    diff = 100*(value-Cincinnati)/Cincinnati,
+    variable = str_remove(variable, "Rate")
+  )
+
+hoods <- unique(hood_rates$Neighborhood)
+
+demo_graph <- function(hood) {
+  x <- filter(
+    hood_rates,
+    variable %in% c(
+      "White", 
+      "Black", 
+      "Hispanic", 
+      "Child", 
+      "ChildHH",
+      "OtherLanguage",
+      "LimitedEnglish"
+      ),
+    Neighborhood == hood
+  ) |>
+    mutate(
+      variable = factor(
+        variable, 
+        levels = c(
+          "White", 
+          "Black", 
+          "Hispanic", 
+          "Child", 
+          "ChildHH", 
+          "OtherLanguage", 
+          "LimitedEnglish"
+        )
       )
-     ),
-    Area = factor(Area, levels = c("Cincinnati", hoods[i]))
     )
+  
+  y <- ggplot(x, aes(x = variable, y = diff)) +
+    geom_bar(stat = "identity", fill = "lightblue") +
+    labs(x = NULL, y = "%", title = hood) +
+    scale_y_continuous(labels = NULL) +
+    scale_x_discrete(
+      labels = c(
+        "White",
+        "Black",
+        "Hispanic",
+        "Children",
+        "Households\nwith Children",
+        "Language other\nthan English",
+        "Limited\nEnglish"
+      )
+    ) +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = .5)) + 
+    geom_text(
+      aes(label = paste0(round(value*100, 1), "%")), 
+      vjust = -.5, 
+      size = 3.5
+      ) +
+    annotate("segment", x = 0.5, xend = 7.5, y = 0, yend = 0)
+  y
+  return(y)
+} 
 
-ggplot(hood_data, aes(x = variable, y = value, fill = Area)) +
-  geom_bar(stat = "identity", position = position_dodge(.9)) +
-  coord_flip() +
-  labs(x = NULL, y = "%", title = hoods[i], fill = NULL) +
-  scale_y_continuous(
-    limits = c(0, 1),
-    breaks = seq(0, 1, .1),
-    labels = seq(0, 100, 10)
-  ) +
-  scale_fill_manual(
-    values = c("darkblue", "lightblue"),
-    breaks = c(hoods[i], "Cincinnati")
-  ) +
-  theme_minimal() +
-  theme(
-    legend.position = "bottom",
-    plot.title = element_text(hjust = .5),
-    panel.grid.minor.x = element_blank(),
-    panel.grid.major.y = element_blank()
-  ) +
-  geom_text(aes(label = round(value*100, 1)), hjust = -.5, size = 3.5, position = position_dodge(.9))
+demo_popups <- lapply(1:length(hoods), function(i) {
+  demo_graph(hood = hoods[i])
+  })
 
+di_graph <- function(hood) {
+  x <- filter(
+    hood_rates,
+    variable %in% c(
+      "Uninsured", 
+      "Assistance", 
+      "HighSchool", 
+      "Poverty", 
+      "Vacancy", 
+      "MedianHHIncome",
+      "DeprivationIndex"
+      ),
+    Neighborhood == hood
+    ) |>
+    mutate(
+      value = ifelse(
+        variable %in% c("MedianHHIncome", "DeprivationIndex"),
+        value, 
+        value*100
+      ),
+      Desired = variable %in% c("MedianHHIncome", "HighSchool"),
+      Direction = diff > 0,
+      Positive = Desired == Direction,
+      Positive = factor(Positive, levels = c(FALSE, TRUE)),
+      variable = factor(
+        variable,
+        levels = c(
+          "DeprivationIndex",
+          "Poverty",
+          "Assistance",
+          "MedianHHIncome",
+          "Uninsured",
+          "HighSchool",
+          "Vacancy"
+        )
+      ),
+      label = case_when(
+        variable == "DeprivationIndex" ~ as.character(round(value, 3)),
+        variable == "MedianHHIncome" ~ 
+          paste0("$", format(round(value), big.mark = ",", trim = TRUE)),
+        TRUE ~ paste0(as.character(round(value, 1)), "%")
+      )
+    )
+  
+  y <- ggplot(x, aes(x = variable, y = diff, fill = Positive)) +
+    geom_bar(stat = "identity") +
+    labs(x = NULL, y = NULL, title = hood, fill = NULL) +
+    scale_y_continuous(labels = NULL) +
+    scale_x_discrete(
+      labels = c(
+        "Deprivation\nIndex",
+        "Poverty\nRate",
+        "On Public\nAssistance",
+        "Median\nHousehold\nIncome",
+        "No Health\nInsurance",
+        "High School\nGraduation",
+        "Housing\nVacancies"
+      )
+    ) +
+    scale_fill_manual(
+      breaks = c(FALSE, TRUE), 
+      values = c("orange", "lightblue"),
+      labels = c("Worse than average", "Better than average")
+      ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = .5),
+      legend.position = "bottom"
+      ) + 
+    geom_text(aes(label = label), vjust = -.5, size = 3.5) +
+    annotate("segment", x = 0.5, xend = 7.5, y = 0, yend = 0)
+  y
+  return(y)
+}
 
+di_popups <- lapply(1:length(hoods), function(i) {
+  di_graph(hood = hoods[i])
+})
+
+health_graph <- function(hood) {
+  x <- hood_rates |>
+    filter(
+      variable %in% c("AsthmaRegistry", "AsthmaAdmission"),
+      Neighborhood == hood
+      ) |>
+    mutate(
+      Positive = diff < 0,
+      Positive = factor(Positive, levels = c(FALSE, TRUE)),
+      variable = factor(variable, levels = c("AsthmaRegistry", "AsthmaAdmission"))
+    )
+  
+  y <- ggplot(x, aes(x = variable, y = diff, fill = Positive)) +
+    geom_bar(stat = "identity") +
+    labs(x = NULL, y = "Per 100 children", title = hood, fill = NULL) +
+    scale_y_continuous(labels = NULL) +
+    scale_x_discrete(
+      labels = c(
+        "Asthma\n Registry",
+        "Asthma\nAdmissions"
+      )
+    ) +
+    scale_fill_manual(
+      breaks = c(FALSE, TRUE), 
+      values = c("orange", "lightblue"),
+      labels = c("Worse than average", "Better than average")
+      ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = .5),
+      legend.position = "bottom"
+      ) + 
+    geom_text(
+      aes(label = round(value*100, 1)), 
+      vjust = -.5, 
+      size = 3.5
+    ) +
+    annotate("segment", x = 0.5, xend = 2.5, y = 0, yend = 0)
+  y
+  return(y)
+}
+
+health_popups <- lapply(1:length(hoods), function(i) {
+  health_graph(hood = hoods[i])
+})
 
 hood_lines <- block_groups(
   state = "OH",
@@ -117,8 +287,72 @@ hood_lines <- block_groups(
   rename(Area = Neighborhood) |>
   mutate(
     State = "Ohio",
-    County = "Hamilton"
-  )
+    County = "Hamilton",
+    Centroid = st_centroid(geometry)
+  ) |>
+  inner_join(select(all_data, Neighborhood, Tier) |> rename(Area = Neighborhood))
+
+pal <- colorFactor("Blues", domain = all_data$Tier)
+#previewColors(colorFactor("Blues", domain = NULL), values = unique(all_data$Tier))
+
+leaflet() |>
+  addTiles() |>
+  addPolygons(
+    data = hood_lines,
+    stroke = TRUE,
+    weight = 1,
+    smoothFactor = .5,
+    opacity = 1,
+    fillOpacity = .7,
+    fillColor = ~pal(Tier)
+    ) |>
+  addLegendFactor(
+    pal = pal,
+    values = hood_lines$Tier,
+    title = "Deprivation Index",
+    position = "bottomleft"
+  ) |>
+  addLayersControl(
+    baseGroups = c(
+      "Demographics", 
+      "Deprivation indicators",
+      "Health indicators"
+      ),
+    position = "bottomright",
+    options = layersControlOptions(collapsed = FALSE)) |>
+  addCircleMarkers(
+    data = hood_lines$Centroid,
+    color = "red",
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
+    popup = popupGraph(demo_popups, height = 300, width = 700),
+    group = "Demographics"
+  ) |>
+  addCircleMarkers(
+    data = hood_lines$Centroid,
+    color = "red",
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
+    popup = popupGraph(di_popups, height = 400, width = 400),
+    group = "Deprivation indicators"
+  ) |>
+  addCircleMarkers(
+    data = hood_lines$Centroid,
+    color = "red",
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
+    popup = popupGraph(health_popups, height = 400, width = 400),
+    group = "Health indicators"
+  ) 
+  
+  
+
+
+
+
 
 oh_lines <- county_subdivisions(
   state = "OH",
