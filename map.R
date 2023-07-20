@@ -62,38 +62,66 @@ all_data <- filter(asthma, Neighborhood != "All") |>
     Tier = factor(
       Tier, 
       levels = c("Lowest", "Lower", "Medium", "Higher", "Highest")
-      )
+      ),
+    GEOID = row_number(),
+    Area = case_when(
+      Neighborhood != "All" ~ Municipality,
+      Municipality != "All" ~ County,
+      TRUE ~ "All"
+    )
   )
 
-hood_benchmarks <- all_data |>
+benchmarks <- all_data |>
   filter(
-    Municipality == "Cincinnati",
-    Neighborhood == "All"
-  ) |>
-  select(c(ends_with("Rate"), MedianHHIncome, DeprivationIndex)) |>
+    Neighborhood == "All",
+    Municipality %in% c("Cincinnati", "All")
+    ) |>
+  mutate(Area = ifelse(Municipality == "Cincinnati", Municipality, County)) |>
+  select(Area, ends_with("Rate"), MedianHHIncome, DeprivationIndex) |>
   pivot_longer(
     cols = WhiteRate:DeprivationIndex,
     names_to = "variable",
-    values_to = "Cincinnati"
+    values_to = "Benchmark"
   )
 
-hood_rates <- filter(all_data, Neighborhood != "All") |>
-  select(c(ends_with("Rate"), MedianHHIncome, DeprivationIndex, Neighborhood)) |>
+rates <- filter(all_data, County != "All") |>
+  select(
+    Area,
+    County,
+    Municipality,
+    Neighborhood, 
+    ends_with("Rate"), 
+    MedianHHIncome, 
+    DeprivationIndex
+    ) |>
   pivot_longer(
     cols = WhiteRate:DeprivationIndex,
     names_to = "variable"
   ) |>
-  left_join(hood_benchmarks) |>
+  inner_join(benchmarks) |>
   mutate(
-    diff = 100*(value-Cincinnati)/Cincinnati,
+    diff = 100*(value-Benchmark)/Benchmark,
     variable = str_remove(variable, "Rate")
-  )
+    )
 
-hoods <- unique(hood_rates$Neighborhood)
+areas <- distinct(rates, Area, County, Municipality, Neighborhood) |>
+  mutate(
+    Label = case_when(
+      Neighborhood != "All" ~ Neighborhood,
+      Municipality != "All" ~ Municipality,
+      TRUE ~ County
+    ),
+    geoid = row_number()
+  ) |>
+  inner_join(select(all_data, County, Municipality, Neighborhood, Tier))
 
-demo_graph <- function(hood) {
+hoods <- areas$geoid[areas$Neighborhood != "All"]
+munis <- areas$geoid[areas$Municipality != "All" & areas$Neighborhood == "All"]
+counties <- areas$geoid[areas$Municipality == "All"]
+
+demo_graph <- function(i) {
   x <- filter(
-    hood_rates,
+    rates,
     variable %in% c(
       "White", 
       "Black", 
@@ -102,9 +130,9 @@ demo_graph <- function(hood) {
       "ChildHH",
       "OtherLanguage",
       "LimitedEnglish"
-      ),
-    Neighborhood == hood
+      )
   ) |>
+    inner_join(areas[i,]) |>
     mutate(
       variable = factor(
         variable, 
@@ -122,7 +150,7 @@ demo_graph <- function(hood) {
   
   y <- ggplot(x, aes(x = variable, y = diff)) +
     geom_bar(stat = "identity", fill = "lightblue") +
-    labs(x = NULL, y = "%", title = hood) +
+    labs(x = NULL, y = "%", title = unique(x$Label)) +
     scale_y_continuous(labels = NULL) +
     scale_x_discrete(
       labels = c(
@@ -147,13 +175,21 @@ demo_graph <- function(hood) {
   return(y)
 } 
 
-demo_popups <- lapply(1:length(hoods), function(i) {
-  demo_graph(hood = hoods[i])
+hood_demo_popups <- lapply(hoods, function(k) {
+  demo_graph(i = k)
   })
 
-di_graph <- function(hood) {
+muni_demo_popups <- lapply(munis, function(k){
+  demo_graph(i = k)
+})
+
+county_demo_popups <- lapply(counties, function(k){
+  demo_graph(i = k)
+})
+
+di_graph <- function(i) {
   x <- filter(
-    hood_rates,
+    rates,
     variable %in% c(
       "Uninsured", 
       "Assistance", 
@@ -162,9 +198,9 @@ di_graph <- function(hood) {
       "Vacancy", 
       "MedianHHIncome",
       "DeprivationIndex"
-      ),
-    Neighborhood == hood
+      )
     ) |>
+    inner_join(areas[i,]) |>
     mutate(
       value = ifelse(
         variable %in% c("MedianHHIncome", "DeprivationIndex"),
@@ -197,7 +233,7 @@ di_graph <- function(hood) {
   
   y <- ggplot(x, aes(x = variable, y = diff, fill = Positive)) +
     geom_bar(stat = "identity") +
-    labs(x = NULL, y = NULL, title = hood, fill = NULL) +
+    labs(x = NULL, y = NULL, title = unique(x$Label), fill = NULL) +
     scale_y_continuous(labels = NULL) +
     scale_x_discrete(
       labels = c(
@@ -226,16 +262,23 @@ di_graph <- function(hood) {
   return(y)
 }
 
-di_popups <- lapply(1:length(hoods), function(i) {
-  di_graph(hood = hoods[i])
+hood_di_popups <- lapply(hoods, function(k) {
+  di_graph(i = k)
 })
 
-health_graph <- function(hood) {
-  x <- hood_rates |>
+muni_di_popups <- lapply(munis, function(k){
+  di_graph(i = k)
+})
+
+county_di_popups <- lapply(counties, function(k){
+  di_graph(i = k)
+})
+
+health_graph <- function(i) {
+  x <- rates |>
     filter(
-      variable %in% c("AsthmaRegistry", "AsthmaAdmission"),
-      Neighborhood == hood
-      ) |>
+      variable %in% c("AsthmaRegistry", "AsthmaAdmission")) |>
+    inner_join(areas[i,]) |>
     mutate(
       Positive = diff < 0,
       Positive = factor(Positive, levels = c(FALSE, TRUE)),
@@ -244,7 +287,7 @@ health_graph <- function(hood) {
   
   y <- ggplot(x, aes(x = variable, y = diff, fill = Positive)) +
     geom_bar(stat = "identity") +
-    labs(x = NULL, y = "Per 100 children", title = hood, fill = NULL) +
+    labs(x = NULL, y = "Per 100 children", title = unique(x$Label), fill = NULL) +
     scale_y_continuous(labels = NULL) +
     scale_x_discrete(
       labels = c(
@@ -272,8 +315,16 @@ health_graph <- function(hood) {
   return(y)
 }
 
-health_popups <- lapply(1:length(hoods), function(i) {
-  health_graph(hood = hoods[i])
+hood_health_popups <- lapply(hoods, function(k) {
+  health_graph(i = k)
+})
+
+muni_health_popups <- lapply(munis, function(k){
+  health_graph(i = k)
+})
+
+county_health_popups <- lapply(counties, function(k){
+  health_graph(i = k)
 })
 
 hood_lines <- block_groups(
@@ -349,83 +400,60 @@ leaflet() |>
   ) 
   
   
-
-
-
-
-
 oh_lines <- county_subdivisions(
   state = "OH",
-  county = c("Hamilton", "Butler", "Warren", "Clermont")
-  ) |>
+  county = c("Hamilton", "Warren", "Clermont", "Butler")
+) |>
   mutate(
     County = case_when(
-      COUNTYFP == "017" ~ "Butler",
-      COUNTYFP == "061" ~ "Hamilton",
-      COUNTYFP == "025" ~ "Clermont",
-      TRUE ~ "Warren"
-      ),
-    County = case_when(
-      NAMELSAD == "Loveland city" ~ "Hamilton",
+      NAME == "Loveland" ~ "Hamilton",
       NAMELSAD == "Fairfield city" ~ "Butler",
       NAMELSAD == "Milford city" ~ "Clermont",
-      TRUE ~ County
-      ),
-    State = "Ohio"
-    ) |>
-  separate_wider_delim(
-    NAMELSAD, delim = " city", names = "Area", too_many = "drop"
+      COUNTYFP == "061"  ~ "Hamilton",
+      COUNTYFP == "017" ~ "Butler",
+      COUNTYFP == "025" ~ "Clermont",
+      TRUE ~ "Warren"
+    )
   ) |>
-  separate_wider_delim(
-    Area, delim = " village", names = "Area", too_many = "drop"
-  ) |>
+  group_by(County, COUSUBFP, NAMELSAD) |>
+  summarise(geometry = st_union(geometry)) |>
+  ungroup() |>
   mutate(
-    Area = ifelse(Area == "The Village of Indian Hill", "Indian Hill", Area)
-    ) |>
-  group_by(State, County, Area) |>
-  summarise(geometry = st_union(geometry))
+    Municipality = str_remove(NAMELSAD, " city"),
+    Municipality = str_remove(Municipality, " village"),
+    Municipality = str_remove(Municipality, "The Village of "),
+    Municipality = str_to_title(Municipality)
+  ) |>
+  select(County, Municipality, geometry)
 
 ky_lines <- county_subdivisions(
   state = "KY",
-  county = c("Boone", "Campbell", "Kenton")
-  ) |>
-  rename(Area = NAME) |>
+  county = c("Kenton", "Campbell", "Boone") 
+) |>
+  rename(Municipality = NAME) |>
   mutate(
     County = case_when(
-      COUNTYFP == "015" ~ "Boone",
       COUNTYFP == "037" ~ "Campbell",
-      TRUE ~ "Kenton"
-      ),
-    State = "Kentucky"
-    ) |>
-  select(State, County, Area, geometry)
+      COUNTYFP == "117" ~ "Kenton",
+      TRUE ~ "Boone"
+    )
+  ) |>
+  select(County, Municipality, geometry)
 
 in_lines <- county_subdivisions(
   state = "IN",
   county = "Dearborn"
-  ) |>
+) |>
   mutate(
     County = "Dearborn",
-    State = "Indiana"
+    Municipality = str_to_title(NAMELSAD)
   ) |>
-  rename(Area = NAMELSAD) |>
-  select(State, County, Area, geometry)
+  select(County, Municipality, geometry)
 
-county_lines <- counties(state = c("OH", "KY", "IN")) |>
-  filter(
-    (NAME %in% c("Hamilton", "Butler", "Clermont", "Warren") & STATEFP == "39") |
-      NAME %in% c("Campbell", "Boone", "Kenton") & STATEFP == "21" |
-      NAME == "Dearborn"
-    ) |>
+muni_lines <- rbind(oh_lines, ky_lines) |>
+  rbind(in_lines) |>
   mutate(
-    State = case_when(
-      STATEFP == "39" ~ "Ohio",
-      STATEFP == "21" ~ "Kentucky",
-      TRUE ~ "Indiana"
-    )
+    Centroid = st_centroid(geometry),
+    Neighborhood = "All"
   ) |>
-  rename(Area = NAME) |>
-  select(Area, State)
-  
-metro_data <- filter(all_data, County == "All")
-
+  inner_join(areas)
