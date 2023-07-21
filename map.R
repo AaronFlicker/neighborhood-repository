@@ -4,6 +4,7 @@ library(leaflet)
 library(leafpop)
 library(sf)
 library(leaflegend)
+library(htmlwidgets)
 # library(geojsonio)
 # library(geojsonsf)
 # library(geojsonlint)
@@ -145,6 +146,12 @@ demo_graph <- function(i) {
           "OtherLanguage", 
           "LimitedEnglish"
         )
+      ),
+      textloc = case_when(
+        diff == max(diff) & diff > 0 ~ .9*diff,
+        diff == min(diff) & diff < 0 ~ diff-(.05*diff),
+        diff > 0 ~ 1.1*diff,
+        TRUE ~ diff+(.05*diff)
       )
     )
   
@@ -166,9 +173,8 @@ demo_graph <- function(i) {
     theme_minimal() +
     theme(plot.title = element_text(hjust = .5)) + 
     geom_text(
-      aes(label = paste0(round(value*100, 1), "%")), 
-      vjust = -.5, 
-      size = 3.5
+      aes(label = paste0(round(value*100, 1), "%"), y = textloc), 
+      size = 4
       ) +
     annotate("segment", x = 0.5, xend = 7.5, y = 0, yend = 0)
   y
@@ -181,11 +187,11 @@ hood_demo_popups <- lapply(hoods, function(k) {
 
 muni_demo_popups <- lapply(munis, function(k){
   demo_graph(i = k)
-})
+  })
 
 county_demo_popups <- lapply(counties, function(k){
   demo_graph(i = k)
-})
+  })
 
 di_graph <- function(i) {
   x <- filter(
@@ -228,6 +234,12 @@ di_graph <- function(i) {
         variable == "MedianHHIncome" ~ 
           paste0("$", format(round(value), big.mark = ",", trim = TRUE)),
         TRUE ~ paste0(as.character(round(value, 1)), "%")
+      ),
+      textloc = case_when(
+        diff == max(diff) & diff > 0 ~ .9*diff,
+        diff == min(diff) & diff < 0 ~ diff-(.05*diff),
+        diff > 0 ~ 1.1*diff,
+        TRUE ~ diff+(.05*diff)
       )
     )
   
@@ -256,7 +268,7 @@ di_graph <- function(i) {
       plot.title = element_text(hjust = .5),
       legend.position = "bottom"
       ) + 
-    geom_text(aes(label = label), vjust = -.5, size = 3.5) +
+    geom_text(aes(label = label, y = textloc), size = 4) +
     annotate("segment", x = 0.5, xend = 7.5, y = 0, yend = 0)
   y
   return(y)
@@ -264,15 +276,15 @@ di_graph <- function(i) {
 
 hood_di_popups <- lapply(hoods, function(k) {
   di_graph(i = k)
-})
+  })
 
 muni_di_popups <- lapply(munis, function(k){
   di_graph(i = k)
-})
+  })
 
 county_di_popups <- lapply(counties, function(k){
   di_graph(i = k)
-})
+  })
 
 health_graph <- function(i) {
   x <- rates |>
@@ -282,7 +294,16 @@ health_graph <- function(i) {
     mutate(
       Positive = diff < 0,
       Positive = factor(Positive, levels = c(FALSE, TRUE)),
-      variable = factor(variable, levels = c("AsthmaRegistry", "AsthmaAdmission"))
+      variable = factor(
+        variable, 
+        levels = c("AsthmaRegistry", "AsthmaAdmission")
+        ),
+      textloc = case_when(
+        diff == max(diff) & diff > 0 ~ .9*diff,
+        diff == min(diff) & diff < 0 ~ diff-(.05*diff),
+        diff > 0 ~ 1.1*diff,
+        TRUE ~ diff+(.05*diff)
+      )
     )
   
   y <- ggplot(x, aes(x = variable, y = diff, fill = Positive)) +
@@ -305,11 +326,7 @@ health_graph <- function(i) {
       plot.title = element_text(hjust = .5),
       legend.position = "bottom"
       ) + 
-    geom_text(
-      aes(label = round(value*100, 1)), 
-      vjust = -.5, 
-      size = 3.5
-    ) +
+    geom_text(aes(label = round(value*100, 1), y = textloc), size = 4) +
     annotate("segment", x = 0.5, xend = 2.5, y = 0, yend = 0)
   y
   return(y)
@@ -317,15 +334,15 @@ health_graph <- function(i) {
 
 hood_health_popups <- lapply(hoods, function(k) {
   health_graph(i = k)
-})
+  })
 
 muni_health_popups <- lapply(munis, function(k){
   health_graph(i = k)
-})
+  })
 
 county_health_popups <- lapply(counties, function(k){
   health_graph(i = k)
-})
+  })
 
 hood_lines <- block_groups(
   state = "OH",
@@ -346,7 +363,7 @@ hood_lines <- block_groups(
 pal <- colorFactor("Blues", domain = all_data$Tier)
 #previewColors(colorFactor("Blues", domain = NULL), values = unique(all_data$Tier))
 
-leaflet() |>
+citymap <- leaflet() |>
   addTiles() |>
   addPolygons(
     data = hood_lines,
@@ -370,14 +387,15 @@ leaflet() |>
       "Health indicators"
       ),
     position = "bottomright",
-    options = layersControlOptions(collapsed = FALSE)) |>
+    options = layersControlOptions(collapsed = FALSE)
+    ) |>
   addCircleMarkers(
     data = hood_lines$Centroid,
     color = "red",
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
-    popup = popupGraph(demo_popups, height = 300, width = 700),
+    popup = popupGraph(hood_demo_popups, height = 300, width = 700),
     group = "Demographics"
   ) |>
   addCircleMarkers(
@@ -386,7 +404,7 @@ leaflet() |>
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
-    popup = popupGraph(di_popups, height = 400, width = 400),
+    popup = popupGraph(hood_di_popups, height = 300, width = 700),
     group = "Deprivation indicators"
   ) |>
   addCircleMarkers(
@@ -395,10 +413,11 @@ leaflet() |>
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
-    popup = popupGraph(health_popups, height = 400, width = 400),
+    popup = popupGraph(hood_health_popups, height = 300, width = 700),
     group = "Health indicators"
   ) 
-  
+
+saveWidget(citymap, "city map.html")
   
 oh_lines <- county_subdivisions(
   state = "OH",
@@ -456,4 +475,130 @@ muni_lines <- rbind(oh_lines, ky_lines) |>
     Centroid = st_centroid(geometry),
     Neighborhood = "All"
   ) |>
-  inner_join(areas)
+  inner_join(areas) |>
+  arrange(geoid)
+
+muni_map <- leaflet() |>
+  addTiles() |>
+  addPolygons(
+    data = muni_lines,
+    stroke = TRUE,
+    weight = 1,
+    smoothFactor = .5,
+    opacity = 1,
+    fillOpacity = .7,
+    fillColor = ~pal(Tier)
+  ) |>
+  addLegendFactor(
+    pal = pal,
+    values = hood_lines$Tier,
+    title = "Deprivation Index",
+    position = "bottomleft"
+  ) |>
+  addLayersControl(
+    baseGroups = c(
+      "Demographics", 
+      "Deprivation indicators",
+      "Health indicators"
+    ),
+    position = "bottomright",
+    options = layersControlOptions(collapsed = FALSE)
+  ) |>
+  addCircleMarkers(
+    data = muni_lines$Centroid,
+    color = "red",
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
+    popup = popupGraph(muni_demo_popups, height = 300, width = 700),
+    group = "Demographics"
+  ) |>
+  addCircleMarkers(
+    data = muni_lines$Centroid,
+    color = "red",
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
+    popup = popupGraph(muni_di_popups, height = 300, width = 700),
+    group = "Deprivation indicators"
+  ) |>
+  addCircleMarkers(
+    data = muni_lines$Centroid,
+    color = "red",
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
+    popup = popupGraph(muni_health_popups, height = 300, width = 700),
+    group = "Health indicators"
+  ) 
+
+saveWidget(muni_map, "muni map.html")
+
+county_lines <- counties(
+  state = c("OH", "KY", "IN")
+) |>
+  filter(
+    (STATEFP == "39" & NAME %in% c("Hamilton", "Butler", "Warren", "Clermont")) |
+      (STATEFP == "21" & NAME %in% c("Kenton", "Boone", "Campbell")) |
+      (STATEFP == "18" & NAME == "Dearborn")
+    ) |>
+  rename(County = NAME) |>
+  select(County, geometry) |>
+  mutate(Centroid = st_centroid(geometry)) |> 
+  inner_join(filter(areas, Area == "All")) |>
+  arrange(geoid)
+
+county_map <- leaflet() |>
+  addTiles() |>
+  addPolygons(
+    data = county_lines,
+    stroke = TRUE,
+    weight = 1,
+    smoothFactor = .5,
+    opacity = 1,
+    fillOpacity = .7,
+    fillColor = ~pal(Tier)
+  ) |>
+  addLegendFactor(
+    pal = pal,
+    values = county_lines$Tier,
+    title = "Deprivation Index",
+    position = "bottomleft"
+  ) |>
+  addLayersControl(
+    baseGroups = c(
+      "Demographics", 
+      "Deprivation indicators",
+      "Health indicators"
+    ),
+    position = "bottomright",
+    options = layersControlOptions(collapsed = FALSE)
+  ) |>
+  addCircleMarkers(
+    data = county_lines$Centroid,
+    color = "red",
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
+    popup = popupGraph(county_demo_popups, height = 300, width = 700),
+    group = "Demographics"
+  ) |>
+  addCircleMarkers(
+    data = county_lines$Centroid,
+    color = "red",
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
+    popup = popupGraph(county_di_popups, height = 300, width = 700),
+    group = "Deprivation indicators"
+  ) |>
+  addCircleMarkers(
+    data = muni_lines$Centroid,
+    color = "red",
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
+    popup = popupGraph(county_health_popups, height = 300, width = 700),
+    group = "Health indicators"
+  ) 
+saveWidget(county_map, "county map.html")
