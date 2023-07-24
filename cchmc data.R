@@ -1,4 +1,5 @@
 library(tidyverse)
+library(lubridate)
 library(odbc)
 library(DBI)
 library(readxl)
@@ -8,20 +9,20 @@ library(sf)
 
 con <- dbConnect(odbc::odbc(), "ClarityProd")
 
-births <- read_excel(
-  "births.xlsx",
-  col_types = c("text", "date", "skip", "numeric", "numeric", rep("skip", 10))
-  ) |>
-  filter(year(calendar_dt) == 2022) |>
-  group_by(Neighborhood) |>
-  summarise(
-    Births = sum(NumBirths, na.rm = TRUE),
-    PrematureBirths = sum(NumGestAgeLT37, na.rm = TRUE)
-    )
+# births <- read_excel(
+#   "births.xlsx",
+#   col_types = c("text", "date", "skip", "numeric", "numeric", rep("skip", 10))
+#   ) |>
+#   filter(year(calendar_dt) == 2022) |>
+#   group_by(Neighborhood) |>
+#   summarise(
+#     Births = sum(NumBirths, na.rm = TRUE),
+#     PrematureBirths = sum(NumGestAgeLT37, na.rm = TRUE)
+#     )
 
 ## Allocation of Hamilton County census block groups
 allocations <- read.csv(
-  "~/neighborhood bg allocations.csv",
+  "input data/neighborhood bg allocations.csv",
   colClasses = c(
     "character", 
     rep("NULL", 3), 
@@ -33,7 +34,7 @@ allocations <- read.csv(
 
 ## Allocation of 8 county census tracts
 oki <- read.csv(
-  "oki allocations.csv",
+  "input data/oki allocations.csv",
   col.names = c(
     "CountyCode",
     "Tract",
@@ -116,6 +117,7 @@ oki$GEOID <- paste0(oki$CountyCode, oki$Tract)
 
 asthma_reg <- dbGetQuery(con, "
   SELECT DISTINCT p.pat_id
+                ,CAST(p.birth_date AS DATE) AS birth_date
 				        ,p.add_line_1
 				        ,p.add_line_2
 				        ,p.city
@@ -130,12 +132,15 @@ asthma_reg <- dbGetQuery(con, "
     INNER JOIN hpceclarity.bmi.patient p
       ON p.pat_id = d.networked_id
   WHERE c.registry_name like '%asthma%'
-  AND m.status_c = 1
+    AND p.add_line_1 not like '%222 E%'
+    AND m.status_c = 1
                   ") |>
   mutate(
     Registry = 1,
-    Admission = 0
-    )
+    Admission = 0,
+    Age = as.numeric(today()-birth_date)/385.25
+    ) |>
+  filter(Age < 18)
 
 asthma_admits <- dbGetQuery(con, "
   SELECT pat_id
@@ -147,7 +152,8 @@ asthma_admits <- dbGetQuery(con, "
         ,countyfp
     FROM temptable.dbo.health_equity_network_encounters
     WHERE year(hosp_admsn_time) = 2022
-    AND asthma_admission = 1
+      AND asthma_admission = 1
+      AND add_line_1 not like '%222 E%'
                             ") |>
   mutate(
     Admission = 1,

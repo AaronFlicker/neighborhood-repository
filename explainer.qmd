@@ -14,6 +14,7 @@ First is a list of deprivation indexes for every census tract in the United Stat
 
 ```{r, warning=FALSE, message=FALSE}
 library(tidyverse)
+library(lubridate)
 library(tidycensus)
 library(odbc)
 library(DBI)
@@ -644,8 +645,6 @@ demo_all <- rbind(cinci_hood, oki_income) |>
   full_join(di_all)
 ```
 
-
-
 1.  Proportion of population that is Black
 
 2.  Proportion of population that is white
@@ -674,4 +673,72 @@ demo_all <- rbind(cinci_hood, oki_income) |>
 
 ```{r, echo=FALSE}
 head(demo_all)
+```
+
+# CCHMC health data
+
+The addresses associated with children on the asthma registry and with children admitted for asthma are available from the HPCEClarity database.
+
+```{r}
+con <- dbConnect(odbc::odbc(), "ClarityProd")
+
+asthma_reg <- dbGetQuery(con, "
+  SELECT DISTINCT p.pat_id
+                ,CAST(p.birth_date AS DATE) AS birth_date
+				        ,p.add_line_1
+				        ,p.add_line_2
+				        ,p.city
+				        ,p.state
+				        ,p.zip
+				        ,p.county
+  FROM hpceclarity.bmi.registry_config c
+    INNER JOIN hpceclarity.bmi.reg_data_hx_membership m
+      ON c.registry_id = m.registry_id
+    INNER JOIN hpceclarity.bmi.registry_data_info d
+      ON m.record_id = d.record_id
+    INNER JOIN hpceclarity.bmi.patient p
+      ON p.pat_id = d.networked_id
+  WHERE c.registry_name like '%asthma%'
+  AND m.status_c = 1
+                  ") |>
+  mutate(
+    Registry = 1,
+    Admission = 0,
+    Age = as.numeric(today()-birth_date)/365.25
+    ) |>
+  filter(Age < 18)
+
+asthma_admits <- dbGetQuery(con, "
+  SELECT pat_id
+        ,pat_addr_1 as add_line_1
+        ,pat_addr_2 as add_line_2
+        ,pat_city as city
+        ,pat_state as state
+        ,pat_zip as zip
+        ,countyfp
+    FROM temptable.dbo.health_equity_network_encounters
+    WHERE year(hosp_admsn_time) = 2022
+    AND asthma_admission = 1
+                            ") |>
+  mutate(
+    Admission = 1,
+    Registry = 0,
+    county = case_when(
+      state == "Ohio" ~ case_when(
+        countyfp == "061" ~ "Hamilton",
+        countyfp == "017" ~ "Butler",
+        countyfp == "025" ~ "Clermont",
+        countyfp == "165" ~ "Warren",
+        TRUE ~ NA
+      ),
+      state == "Kentucky" ~ case_when(
+        countyfp == "015" ~ "Boone",
+        countyfp == "037"~ "Campbell",
+        countyfp == "117" ~ "Kenton",
+        TRUE ~ NA
+      ),
+      state == "Indiana" ~ ifelse(countyfp == "029", "Dearborn", NA),
+      TRUE ~ NA
+      )
+    )
 ```
