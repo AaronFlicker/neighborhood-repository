@@ -699,7 +699,8 @@ asthma_reg <- dbGetQuery(con, "
     INNER JOIN hpceclarity.bmi.patient p
       ON p.pat_id = d.networked_id
   WHERE c.registry_name like '%asthma%'
-  AND m.status_c = 1
+    AND p.add_line_1 not like '%222 E%'
+    AND m.status_c = 1
                   ") |>
   mutate(
     Registry = 1,
@@ -718,7 +719,8 @@ asthma_admits <- dbGetQuery(con, "
         ,countyfp
     FROM temptable.dbo.health_equity_network_encounters
     WHERE year(hosp_admsn_time) = 2022
-    AND asthma_admission = 1
+      AND asthma_admission = 1
+      AND add_line_1 not like '%222 E%'
                             ") |>
   mutate(
     Admission = 1,

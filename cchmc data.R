@@ -185,6 +185,7 @@ adds <- asthma_admits |>
   select(-countyfp) |>
   rbind(
     asthma_reg |>
+      select(-c(birth_date, Age)) |>
       filter(
         (state == "Ohio" & 
            county %in% c("HAMILTON", "CLERMONT", "BUTLER", "WARREN")) |
@@ -211,79 +212,48 @@ adds <- asthma_admits |>
 
 unique_adds <- adds |>
   distinct(City, state, Zip, Address) |>
+  mutate(ID = row_number())
+
+for_geocoder <- unique_adds |>
   mutate(
-    ID = row_number(),
-    Address = ifelse(
-      str_detect(Address, "4231 SOPHIA"), "4231 SOPHIAS Way", Address)
-    )
-
-batch1 <- unique_adds[1:10000,]
-
-geocoded <- geocode(
-  batch1,
-  street = Address,
-  city = City,
-  state = state,
-  postalcode = Zip,
-  method = "census",
-  full_results = TRUE,
-  api_options = list(census_return_type = 'geographies')
-  )
-
-to_geocode <- unique_adds[10001:nrow(unique_adds),]
-while (nrow(to_geocode) > 0){
-  batch <- to_geocode[1:(min(10000, nrow(to_geocode))),]
-  x <- geocode(
-    batch,
-    street = Address,
-    city = City,
-    state = state,
-    postalcode = Zip,
-    method = "census",
-    full_results = TRUE,
-    api_options = list(census_return_type = 'geographies')
-  )
-  geocoded <- rbind(geocoded, x)
-  to_geocode <- anti_join(to_geocode, batch, join_by(ID))
-}
-
-geocoded2 <- filter(geocoded, !is.na(lat)) |>
-  select(ID, lat, long, state_fips, county_fips, census_tract, census_block) |>
-  mutate(GEOID = paste0(state_fips, county_fips, census_tract)) |>
-  inner_join(oki, multiple = "all") |>
-  group_by(ID) |>
-  mutate(count = n())
-
-singles <- filter(geocoded2, count == 1)
-hooded1 <- filter(singles, Municipality == "Cincinnati") |>
-  mutate(
-    GEOID = paste0(GEOID, str_trunc(census_block, 1, "right", ellipsis = ""))
+    state = case_when(
+      state == "Ohio" ~ "OH",
+      state == "Kentucky" ~ "KY",
+      TRUE ~ "IN"
+    ),
+    address = paste(Address, City, state, Zip, sep = ", ")
     ) |>
-  inner_join(allocations) |>
-  select(ID, Municipality, County, State, Neighborhood)
-hooded2 <- filter(singles, Municipality != "Cincinnati") |>
-  select(ID, Municipality, County, State) |>
-  mutate(Neighborhood = NA)
+  select(ID, address)
+write_csv(for_geocoder, "for_degauss.csv")
 
-multi <- filter(geocoded2, count > 1)
+#cd "C:\Users\FLI6SH\OneDrive - cchmc\ACT_Neighborhood\Repository\neighborhood-repository
+#docker run --rm -v ${PWD}:/tmp ghcr.io/degauss-org/geocoder:3.0.2 for_degauss.csv
+  
+geocoded <- read.csv("for_degauss_geocoded_v3.0.2.csv") |>
+  filter(precision == "range", 
+         geocode_result != "imprecise_geocode") |>
+  st_as_sf(coords = c("lon", "lat"), crs = 'NAD83', remove = FALSE)
 
 oh_munis <- county_subdivisions(
   state = "OH",
   county = c("Hamilton", "Butler", "Clermont", "Warren"),
   year = 2021
-  )
+  ) |>
+  mutate(State = "Ohio")
 
 ky_munis <- county_subdivisions(
   state = "KY",
   county = c("Boone", "Campbell", "Kenton"),
   year = 2021
-)
+  ) |>
+  mutate(State = "Kentucky")
 
 in_munis <- county_subdivisions(
   state = "IN",
   county = "Dearborn",
   year = 2021
-)
+  ) |>
+  mutate(State = "Indiana")
 
 oki_munis <- rbind(oh_munis, ky_munis) |>
   rbind(in_munis) |>
@@ -304,44 +274,95 @@ oki_munis <- rbind(oh_munis, ky_munis) |>
     Municipality = str_trim(Municipality),
     Municipality = ifelse(
       str_detect(Municipality, "Indian Hill"), "Indian Hill", Municipality
+    ),
+    County = case_when(
+      COUNTYFP == "017" ~ "Butler",
+      COUNTYFP == "025" ~ "Clermont",
+      COUNTYFP == "061" ~ "Hamilton",
+      COUNTYFP == "165" ~ "Warren",
+      COUNTYFP == "015" ~ "Boone",
+      COUNTYFP == "037" ~ "Campbell",
+      COUNTYFP == "117" ~ "Kenton",
+      COUNTYFP == "029" ~ "Dearborn",
+      TRUE ~ NA
     )
   ) |>
+  select(Municipality, County, State, geometry) |>
+  st_as_sf() |>
+  st_join(geocoded) |>
+  group_by(ID) |>
+  mutate(count = n())
+
+muni_singles <- filter(oki_munis, count == 1)
+cinci1 <- filter(muni_singles, Municipality == "Cincinnati") |>
+  as_tibble() |>
+  select(ID) |>
+  inner_join(geocoded) |>
+  select(ID, geometry) |>
   st_as_sf()
 
-points_muni <- multi %>%
-  st_as_sf(coords = c("long", "lat"),
-           crs = st_crs(oki_munis))
-intersected <- st_intersects(points_muni, oki_munis) |> 
-  as.character()
-hooded3 <- data.frame(points_muni) %>%
+hooded1 <- filter(muni_singles, Municipality != "Cincinnati") |>
+  as_tibble() |>
+  select(ID, State, County, Municipality) |>
+  mutate(Neighborhood = NA)
+muni_multi <- filter(oki_munis, count > 1) |>
+  select(Municipality:ID) |>
+  inner_join(oki, multiple = "all")
+
+oh_tracts <- tracts(
+  state = "OH",
+  county = c("Hamilton", "Warren", "Clermont", "Butler"),
+  year = 2021
+  )
+
+ky_tracts <- tracts(
+  state = "KY",
+  county = c("Kenton", "Boone", "Campbell"),
+  year = 2021
+  )
+
+in_tracts <- tracts(
+  state = "IN",
+  county = "Dearborn",
+  year = 2021
+  )
+
+hooded2 <- rbind(oh_tracts, ky_tracts) |>
+  rbind(in_tracts) |>
+  st_join(distinct(muni_multi, ID, geometry)) |>
+  distinct(ID, geometry, GEOID) |>
+  as_tibble() |>
+  inner_join(muni_multi) |>
+  select(ID, State, County, Municipality) |>
+  mutate(Neighborhood = NA)
+  
+hamco_bg <- block_groups(
+  state = "OH",
+  county = "Hamilton",
+  year = 2021
+  )
+
+cinci_bg <- st_join(cinci1, hamco_bg) |>
+  inner_join(filter(allocations, Municipality == "Cincinnati")) |>
+  distinct(ID, Municipality, Neighborhood) |>
+  group_by(ID) |>
+  mutate(count = n()) |>
+  arrange(-count, ID)
+
+hooded3 <- filter(cinci_bg, count == 1) |>
+  select(-count) |>
   mutate(
-    intersection = as.integer(intersected),
-    Municipality = ifelse(
-      is.na(intersection), NA, oki_munis$Municipality[intersection]
+    County = "Hamilton",
+    State = "Ohio"
     )
-  ) |>
-  inner_join(multi) |>
-  mutate(
-    GEOID = paste0(GEOID, str_trunc(census_block, 1, "right", ellipsis = ""))
-    ) |>
-  select(ID, Municipality, GEOID, State, County) |>
-  left_join(allocations) |>
-  mutate(Neighborhood = ifelse(Municipality == "Cincinnati", Neighborhood, NA)) |>
-  select(ID, Municipality, Neighborhood, State, County)
+
 hooded_all <- rbind(hooded1, hooded2) |>
   rbind(hooded3) |>
   inner_join(unique_adds) |>
   inner_join(adds, multiple = "all") |>
-  ungroup() |>
-  mutate(
-    County = case_when(
-      Municipality == "Loveland" ~ "Hamilton",
-      Municipality == "Milford" ~ "Clermont",
-      TRUE ~ County
-      )
-    ) |>
   group_by(State, County, Municipality, Neighborhood) |>
   summarise(
     AsthmaRegistry = sum(Registry),
     AsthmaAdmissions = sum(Admission)
-    )
+  )
+write_csv(hooded_all, "asthma.csv")
