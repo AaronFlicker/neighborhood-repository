@@ -1,13 +1,11 @@
-library(tidyverse)
-library(tigris)
+library(htmlwidgets)
 library(leaflet)
+library(leaflegend)
 library(leafpop)
 library(sf)
-library(leaflegend)
-library(htmlwidgets)
-# library(geojsonio)
-# library(geojsonsf)
-# library(geojsonlint)
+library(tidyverse)
+library(tigris)
+
 allocations <- read.csv(
   "~/neighborhood bg allocations.csv",
   colClasses = c(
@@ -49,8 +47,9 @@ all_data <- filter(asthma, Neighborhood != "All") |>
   rbind(asthma_cs) |>
   rbind(asthma_county) |>
   rbind(asthma_total) |>
-  inner_join(census) |>
+  right_join(census) |>
   mutate(
+    across(AsthmaRegistry:AsthmaAdmissions, \(x) coalesce(x, 0)),
     AsthmaRegistryRate = AsthmaRegistry/Children,
     AsthmaAdmissionRate = AsthmaAdmissions/Children,
     Tier = case_when(
@@ -111,12 +110,16 @@ areas <- distinct(rates, Area, County, Municipality, Neighborhood) |>
       Neighborhood != "All" ~ Neighborhood,
       Municipality != "All" ~ Municipality,
       TRUE ~ County
-    ),
-    geoid = row_number()
+    )
   ) |>
-  inner_join(select(all_data, County, Municipality, Neighborhood, Tier))
+  inner_join(select(all_data, County, Municipality, Neighborhood, Tier)) |>
+  arrange(Area, Neighborhood) |>
+  mutate(geoid = row_number())
 
-hoods <- areas$geoid[areas$Neighborhood != "All"]
+hoods <- areas$geoid[areas$Neighborhood != "All" | 
+                       areas$Municipality %in% c(
+                         "Norwood", "St. Bernard", "Elmwood Place"
+                         )]
 munis <- areas$geoid[areas$Municipality != "All" & areas$Neighborhood == "All"]
 counties <- areas$geoid[areas$Municipality == "All"]
 
@@ -332,7 +335,7 @@ health_graph <- function(i) {
   return(y)
 }
 
-hood_health_popups <- lapply(hoods, function(k) {
+hood_health_popups <- lapply(hoods, function(k){
   health_graph(i = k)
   })
 
@@ -349,7 +352,9 @@ hood_lines <- block_groups(
   county = "Hamilton"
   ) |>
   inner_join(allocations, multiple = "all") |>
-  filter(Municipality == "Cincinnati") |>
+  filter(
+    Municipality %in% c("Cincinnati", "Norwood", "St. Bernard", "Elmwood Place")
+    ) |>
   group_by(Neighborhood) |>
   summarise(geometry = st_union(geometry)) |>
   rename(Area = Neighborhood) |>
@@ -358,7 +363,12 @@ hood_lines <- block_groups(
     County = "Hamilton",
     Centroid = st_centroid(geometry)
   ) |>
-  inner_join(select(all_data, Neighborhood, Tier) |> rename(Area = Neighborhood))
+  inner_join(select(all_data, Neighborhood, Tier, Municipality) |> 
+               mutate(Area = ifelse(
+                 Neighborhood == "All", Municipality, Neighborhood
+                 ))) |>
+  inner_join(select(areas, -Area)) |>
+  arrange(geoid)
 
 pal <- colorFactor("Blues", domain = all_data$Tier)
 #previewColors(colorFactor("Blues", domain = NULL), values = unique(all_data$Tier))
@@ -422,7 +432,7 @@ saveWidget(citymap, "city map.html")
 oh_lines <- county_subdivisions(
   state = "OH",
   county = c("Hamilton", "Warren", "Clermont", "Butler")
-) |>
+  ) |>
   mutate(
     County = case_when(
       NAME == "Loveland" ~ "Hamilton",

@@ -356,7 +356,7 @@ hooded3 <- filter(cinci_bg, count == 1) |>
     State = "Ohio"
     )
 
-hooded_all <- rbind(hooded1, hooded2) |>
+asthma <- rbind(hooded1, hooded2) |>
   rbind(hooded3) |>
   inner_join(unique_adds) |>
   inner_join(adds, multiple = "all") |>
@@ -365,4 +365,4 @@ hooded_all <- rbind(hooded1, hooded2) |>
     AsthmaRegistry = sum(Registry),
     AsthmaAdmissions = sum(Admission)
   )
-write_csv(hooded_all, "asthma.csv")
+write_csv(asthma, "asthma.csv")

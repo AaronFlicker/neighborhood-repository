@@ -1,5 +1,5 @@
 ---
-title: "neighborhood data repository"
+title: "Producing the Neighborhood Data Repository"
 author: "Aaron Flicker"
 format: 
   html:
@@ -743,4 +743,228 @@ asthma_admits <- dbGetQuery(con, "
       TRUE ~ NA
       )
     )
+```
+
+Once unique addresses in the eight-county area are identified for these patients, the addresses are geocoded using the DeGAUSS app.
+
+```{r}
+adds <- asthma_admits |>
+  filter(
+    !is.na(county) | 
+      (state %in% c("Ohio", "Indiana", "Kentucky") & is.na(countyfp))
+    ) |>
+  select(-countyfp) |>
+  rbind(
+    asthma_reg |>
+      select(-c(birth_date, Age)) |>
+      filter(
+        (state == "Ohio" & 
+           county %in% c("HAMILTON", "CLERMONT", "BUTLER", "WARREN")) |
+          (state == "Kentucky" & county %in% c("BOONE", "CAMPBELL", "KENTON")) |
+          (state == "Indiana" & county == "DEARBORN") |
+          (state %in% c("Ohio", "Indiana", "Kentucky") & is.na(county))
+      )
+  ) |>
+  mutate(
+    City = str_to_upper(city),
+    Zip = str_trunc(zip, 5, "right", ellipsis = ""),
+    Address = coalesce(add_line_1, add_line_2),
+    Address = str_to_upper(Address),
+    ) |>
+  separate_wider_delim(
+    Address, delim = "APT", names = "Address", too_many = "drop"
+  ) |>
+  separate_wider_delim(
+    Address, delim = "#", names = "Address", too_many = "drop"
+  ) |>
+  separate_wider_delim(
+    Address, delim = "UNIT", names = "Address", too_many = "drop"
+  )
+
+unique_adds <- adds |>
+  distinct(City, state, Zip, Address) |>
+  mutate(ID = row_number())
+
+for_geocoder <- unique_adds |>
+  mutate(
+    state = case_when(
+      state == "Ohio" ~ "OH",
+      state == "Kentucky" ~ "KY",
+      TRUE ~ "IN"
+    ),
+    address = paste(Address, City, state, Zip, sep = ", ")
+    ) |>
+  select(ID, address)
+#write_csv(for_geocoder, "for_degauss.csv")
+```
+
+DeGAUSS determines latitude and longitude coordinates for the address. Addresses are considered a match if they are geocoded with precision at the level of a range of street numbers.
+
+```{r}
+geocoded <- read.csv("for_degauss_geocoded_v3.0.2.csv") |>
+  filter(
+    precision == "range", 
+    geocode_result != "imprecise_geocode") |>
+  st_as_sf(coords = c("lon", "lat"), crs = 'NAD83', remove = FALSE)
+```
+
+To place the latitude and longitude coordinates in a jurisdiction, shapefiles of the county subdivision are obtained using the tigris package in R. Joining the geocoded addresses to the shapefiles using the sf package will, in most cases, place the address in the appropriate jurisdiction.
+
+```{r, output=FALSE}
+
+oh_munis <- county_subdivisions(
+  state = "OH",
+  county = c("Hamilton", "Butler", "Clermont", "Warren"),
+  year = 2021
+  ) |>
+  mutate(State = "Ohio")
+
+ky_munis <- county_subdivisions(
+  state = "KY",
+  county = c("Boone", "Campbell", "Kenton"),
+  year = 2021
+  ) |>
+  mutate(State = "Kentucky")
+
+in_munis <- county_subdivisions(
+  state = "IN",
+  county = "Dearborn",
+  year = 2021
+  ) |>
+  mutate(State = "Indiana")
+
+oki_munis <- rbind(oh_munis, ky_munis) |>
+  rbind(in_munis) |>
+  separate_wider_delim(
+    NAMELSAD, delim = "village", names = "Municipality", too_many = "drop"
+  ) |>
+  separate_wider_delim(
+    Municipality, delim = "city", names = "Municipality", too_many = "drop"
+  ) |>
+  separate_wider_delim(
+    Municipality, delim = "CCD", names = "Municipality", too_many = "drop"
+  ) |>
+  separate_wider_delim(
+    Municipality, delim = ",", names = "Municipality", too_many = "drop"
+  ) |>
+  mutate(
+    Municipality = str_to_title(Municipality),
+    Municipality = str_trim(Municipality),
+    Municipality = ifelse(
+      str_detect(Municipality, "Indian Hill"), "Indian Hill", Municipality
+    ),
+    County = case_when(
+      COUNTYFP == "017" ~ "Butler",
+      COUNTYFP == "025" ~ "Clermont",
+      COUNTYFP == "061" ~ "Hamilton",
+      COUNTYFP == "165" ~ "Warren",
+      COUNTYFP == "015" ~ "Boone",
+      COUNTYFP == "037" ~ "Campbell",
+      COUNTYFP == "117" ~ "Kenton",
+      COUNTYFP == "029" ~ "Dearborn",
+      TRUE ~ NA
+    )
+  ) |>
+  select(Municipality, County, State, geometry) |>
+  st_as_sf() |>
+  st_join(geocoded) |>
+  group_by(ID) |>
+  mutate(count = n())
+```
+
+If the address is placed in one and only one municipality, and that municipality is not Cincinnati, then the geocoding process is complete.
+
+```{r}
+muni_singles <- filter(oki_munis, count == 1)
+cinci1 <- filter(muni_singles, Municipality == "Cincinnati") |>
+  as_tibble() |>
+  select(ID) |>
+  inner_join(geocoded) |>
+  select(ID, geometry) |>
+  st_as_sf()
+
+hooded1 <- filter(muni_singles, Municipality != "Cincinnati") |>
+  as_tibble() |>
+  select(ID, State, County, Municipality) |>
+  mutate(Neighborhood = NA)
+```
+
+For those placed in more than jurisdiction, the location is then mapped to a census tract. If that census tract is associated with only one jurisdiction, then the address can be placed in that jurisdiction.
+
+```{r, output=FALSE}
+muni_multi <- filter(oki_munis, count > 1) |>
+  select(Municipality:ID) |>
+  inner_join(oki, multiple = "all")
+
+oh_tracts <- tracts(
+  state = "OH",
+  county = c("Hamilton", "Warren", "Clermont", "Butler"),
+  year = 2021
+  )
+
+ky_tracts <- tracts(
+  state = "KY",
+  county = c("Kenton", "Boone", "Campbell"),
+  year = 2021
+  )
+
+in_tracts <- tracts(
+  state = "IN",
+  county = "Dearborn",
+  year = 2021
+  )
+
+hooded2 <- rbind(oh_tracts, ky_tracts) |>
+  rbind(in_tracts) |>
+  st_join(distinct(muni_multi, ID, geometry)) |>
+  distinct(ID, geometry, GEOID) |>
+  as_tibble() |>
+  inner_join(muni_multi) |>
+  select(ID, State, County, Municipality) |>
+  mutate(Neighborhood = NA)
+```
+
+For addresses located in Cincinnati, first the address is matched to a census block group, and then the block group to a neighborhood.
+
+```{r, output=FALSE}
+hamco_bg <- block_groups(
+  state = "OH",
+  county = "Hamilton",
+  year = 2021
+  )
+
+cinci_bg <- st_join(cinci1, hamco_bg) |>
+  inner_join(filter(allocations, Municipality == "Cincinnati")) |>
+  distinct(ID, Municipality, Neighborhood) |>
+  group_by(ID) |>
+  mutate(count = n()) |>
+  arrange(-count, ID)
+
+hooded3 <- filter(cinci_bg, count == 1) |>
+  select(-count) |>
+  mutate(
+    County = "Hamilton",
+    State = "Ohio"
+    )
+```
+
+Finally, geocoded addresses are matched back to individual patients, and the number of patients and admissions tallied for each neighborhood and county subdivision.
+
+```{r}
+#| message=FALSE
+asthma <- rbind(hooded1, hooded2) |>
+  rbind(hooded3) |>
+  inner_join(unique_adds) |>
+  inner_join(adds, multiple = "all") |>
+  group_by(State, County, Municipality, Neighborhood) |>
+  summarise(
+    AsthmaRegistry = sum(Registry),
+    AsthmaAdmissions = sum(Admission)
+  )
+```
+
+Admissions and patients then are totaled for Cincinnati, and at the county and metropolitan levels.
+
+```{r}
+
 ```
