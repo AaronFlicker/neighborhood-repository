@@ -16,7 +16,7 @@ allocations <- read.csv(
     "character"
     )
   )
-#oki <- read.csv("oki allocations.csv")
+
 census <- read.csv("census_data.csv") |>
   mutate(across(Municipality:Neighborhood, \(x) coalesce(x, "All")))
 asthma <- read.csv("asthma.csv")
@@ -50,8 +50,18 @@ all_data <- filter(asthma, Neighborhood != "All") |>
   right_join(census) |>
   mutate(
     across(AsthmaRegistry:AsthmaAdmissions, \(x) coalesce(x, 0)),
-    AsthmaRegistryRate = AsthmaRegistry/Children,
-    AsthmaAdmissionRate = AsthmaAdmissions/Children,
+    AsthmaRegistryRate = AsthmaRegistry*100/Children,
+    AsthmaRegistryRate = ifelse(
+      is.infinite(AsthmaRegistryRate), 
+      NA, 
+      AsthmaRegistryRate
+      ),
+    AsthmaAdmissionRate = AsthmaAdmissions*100/Children,
+    AsthmaAdmissionRate = ifelse(
+      is.nan(AsthmaAdmissionRate), 
+      NA, 
+      AsthmaAdmissionRate
+    ),
     Tier = case_when(
       DeprivationIndex >= .6 ~ "Highest",
       DeprivationIndex >= .475 ~ "Higher",
@@ -63,30 +73,71 @@ all_data <- filter(asthma, Neighborhood != "All") |>
       Tier, 
       levels = c("Lowest", "Lower", "Medium", "Higher", "Highest")
       ),
-    GEOID = row_number(),
-    Area = case_when(
-      Neighborhood != "All" ~ Municipality,
-      Municipality != "All" ~ County,
+    Level = case_when(
+      Neighborhood != "All" ~ "Neighborhood",
+      Municipality != "All" ~ "Municipality",
+      County != "All" ~ "County",
       TRUE ~ "All"
+    ),
+    Label = case_when(
+      Neighborhood != "All" ~ Neighborhood,
+      Municipality != "All" ~ Municipality,
+      TRUE ~ County
     )
   )
 
 benchmarks <- all_data |>
-  filter(
-    Neighborhood == "All",
-    Municipality %in% c("Cincinnati", "All")
-    ) |>
-  mutate(Area = ifelse(Municipality == "Cincinnati", Municipality, County)) |>
-  select(Area, ends_with("Rate"), MedianHHIncome, DeprivationIndex) |>
+  select(
+    County:Neighborhood, 
+    ends_with("Rate"), 
+    Level, 
+    MedianHHIncome, 
+    DeprivationIndex
+    )
+
+bench_min <- benchmarks |>
+  group_by(Level) |>
+  summarise(across(WhiteRate:DeprivationIndex, \(x) min(x, na.rm = TRUE))) |>
   pivot_longer(
     cols = WhiteRate:DeprivationIndex,
     names_to = "variable",
-    values_to = "Benchmark"
+    values_to = "Minimum"
   )
+
+bench_max <- benchmarks |>
+  group_by(Level) |>
+  summarise(across(WhiteRate:DeprivationIndex, \(x) max(x, na.rm = TRUE))) |>
+  pivot_longer(
+    cols = WhiteRate:DeprivationIndex,
+    names_to = "variable",
+    values_to = "Maximum"
+  )
+
+bench_mean <- benchmarks |>
+  filter(
+    County == "All" | (Municipality == "Cincinnati" & Neighborhood == "All")
+    ) |>
+  mutate(Level = ifelse(Level == "Municipality", "Neighborhood", "All")) |>
+  select(WhiteRate:DeprivationIndex) |>
+  pivot_longer(
+    cols = c(WhiteRate:AsthmaAdmissionRate, MedianHHIncome, DeprivationIndex),
+    names_to = "variable",
+    values_to = "Mean"
+  )
+
+bench_mean2 <- filter(bench_mean, Level == "All") |>
+  mutate(Level = "County")
+
+benchmarks_all <- bench_mean2 |>
+  mutate(Level = "Municipality") |>
+  rbind(bench_mean) |>
+  rbind(bench_mean2) |>
+  inner_join(bench_max) |>
+  inner_join(bench_min)
 
 rates <- filter(all_data, County != "All") |>
   select(
-    Area,
+    Level,
     County,
     Municipality,
     Neighborhood, 
@@ -98,13 +149,66 @@ rates <- filter(all_data, County != "All") |>
     cols = WhiteRate:DeprivationIndex,
     names_to = "variable"
   ) |>
-  inner_join(benchmarks) |>
+  inner_join(benchmarks_all) |>
   mutate(
-    diff = 100*(value-Benchmark)/Benchmark,
-    variable = str_remove(variable, "Rate")
-    )
+    Shade = ifelse(
+      value > Mean, 
+      (value-Mean)/(Maximum-Mean), 
+      (value-Mean)/(Mean-Minimum)
+      ),
+    Shade = ifelse(is.infinite(Shade), NA, Shade),
+    Scale = case_when(
+      variable %in% c(
+        "WhiteRate", 
+        "BlackRate", 
+        "HispanicRate", 
+        "ChildRate", 
+        "ChildHHRate",
+        "OtherLanguageRate",
+        "LimitedEnglishRate"
+      ) ~ value,
+      str_detect(variable, "Asthma") ~ value/125,
+      TRUE ~ (value-Minimum)/(Maximum-Minimum)
+    ),
+    Textloc = ifelse(Scale > .9, Scale - .025, Scale + .04)
+  )
 
-areas <- distinct(rates, Area, County, Municipality, Neighborhood) |>
+inner_subs <- filter(
+  rates, 
+  Municipality %in% c("Norwood", "St. Bernard", "Elmwood Place")
+  ) |>
+  select(County:value) |>
+  mutate(
+    Level = "Neighborhood",
+    Neighborhood = Municipality
+    ) |>
+  inner_join(benchmarks_all) |>
+  mutate(
+    Shade = ifelse(
+      value > Mean, 
+      (value-Mean)/(Maximum-Mean), 
+      (value-Mean)/(Mean-Minimum)
+    ),
+    Scale = case_when(
+      variable %in% c(
+        "WhiteRate", 
+        "BlackRate", 
+        "HispanicRate", 
+        "ChildRate", 
+        "ChildHHRate",
+        "OtherLanguageRate",
+        "LimitedEnglishRate"
+      ) ~ value,
+      str_detect(variable, "Asthma") ~ value/125,
+      TRUE ~ (value-Minimum)/(Maximum-Minimum)
+      ),
+    Textloc = ifelse(Scale > .9, Scale - .025, Scale + .025)
+  )
+
+rates <- rbind(rates, inner_subs) |>
+  mutate(variable = str_remove(variable, "Rate"))
+
+areas <- distinct(rates, Level, County, Municipality, Neighborhood) |>
   mutate(
     Label = case_when(
       Neighborhood != "All" ~ Neighborhood,
@@ -112,16 +216,13 @@ areas <- distinct(rates, Area, County, Municipality, Neighborhood) |>
       TRUE ~ County
     )
   ) |>
-  inner_join(select(all_data, County, Municipality, Neighborhood, Tier)) |>
-  arrange(Area, Neighborhood) |>
+  inner_join(select(all_data, County, Label, Tier)) |>
+  arrange(Level, Label) |>
   mutate(geoid = row_number())
 
-hoods <- areas$geoid[areas$Neighborhood != "All" | 
-                       areas$Municipality %in% c(
-                         "Norwood", "St. Bernard", "Elmwood Place"
-                         )]
-munis <- areas$geoid[areas$Municipality != "All" & areas$Neighborhood == "All"]
-counties <- areas$geoid[areas$Municipality == "All"]
+hoods <- areas$geoid[areas$Level == "Neighborhood"]
+munis <- areas$geoid[areas$Level == "Municipality"]
+counties <- areas$geoid[areas$Level == "County"]
 
 demo_graph <- function(i) {
   x <- filter(
@@ -148,20 +249,18 @@ demo_graph <- function(i) {
           "ChildHH", 
           "OtherLanguage", 
           "LimitedEnglish"
+          )
         )
-      ),
-      textloc = case_when(
-        diff == max(diff) & diff > 0 ~ .9*diff,
-        diff == min(diff) & diff < 0 ~ diff-(.05*diff),
-        diff > 0 ~ 1.1*diff,
-        TRUE ~ diff+(.05*diff)
       )
-    )
   
-  y <- ggplot(x, aes(x = variable, y = diff)) +
-    geom_bar(stat = "identity", fill = "lightblue") +
+  y <- ggplot(x, aes(x = variable, y = Scale, fill = Shade)) +
+    geom_bar(stat = "identity", color = "black") +
     labs(x = NULL, y = "%", title = unique(x$Label)) +
-    scale_y_continuous(labels = NULL) +
+    scale_y_continuous(
+      limits = c(0, 1),
+      breaks = seq(0, 1, .2),
+      labels = seq(0, 100, 20)
+    ) +
     scale_x_discrete(
       labels = c(
         "White",
@@ -174,12 +273,18 @@ demo_graph <- function(i) {
       )
     ) +
     theme_minimal() +
+    guides(fill = "none") +
     theme(plot.title = element_text(hjust = .5)) + 
     geom_text(
-      aes(label = paste0(round(value*100, 1), "%"), y = textloc), 
+      aes(label = paste0(round(value*100, 1), "%"), y = Textloc), 
       size = 4
       ) +
-    annotate("segment", x = 0.5, xend = 7.5, y = 0, yend = 0)
+    scale_fill_gradient2(
+      limits = c(-1, 1), 
+      high = "red", 
+      low = "blue", 
+      mid = "grey"
+      )
   y
   return(y)
 } 
@@ -211,15 +316,6 @@ di_graph <- function(i) {
     ) |>
     inner_join(areas[i,]) |>
     mutate(
-      value = ifelse(
-        variable %in% c("MedianHHIncome", "DeprivationIndex"),
-        value, 
-        value*100
-      ),
-      Desired = variable %in% c("MedianHHIncome", "HighSchool"),
-      Direction = diff > 0,
-      Positive = Desired == Direction,
-      Positive = factor(Positive, levels = c(FALSE, TRUE)),
       variable = factor(
         variable,
         levels = c(
@@ -236,20 +332,25 @@ di_graph <- function(i) {
         variable == "DeprivationIndex" ~ as.character(round(value, 3)),
         variable == "MedianHHIncome" ~ 
           paste0("$", format(round(value), big.mark = ",", trim = TRUE)),
-        TRUE ~ paste0(as.character(round(value, 1)), "%")
-      ),
-      textloc = case_when(
-        diff == max(diff) & diff > 0 ~ .9*diff,
-        diff == min(diff) & diff < 0 ~ diff-(.05*diff),
-        diff > 0 ~ 1.1*diff,
-        TRUE ~ diff+(.05*diff)
+        TRUE ~ paste0(as.character(round(value*100, 1)), "%")
+        ),
+      Shade = ifelse(
+        variable %in% c("MedianHHIncome", "HighSchool"), 
+        Shade * -1, 
+        Shade
+        )
       )
-    )
   
-  y <- ggplot(x, aes(x = variable, y = diff, fill = Positive)) +
+  y <- ggplot(x, aes(x = variable, y = Scale, fill = Shade)) +
     geom_bar(stat = "identity") +
+    scale_fill_gradient2(
+      limits = c(-1, 1), 
+      high = "red", 
+      low = "blue", 
+      mid = "grey"
+      ) +
     labs(x = NULL, y = NULL, title = unique(x$Label), fill = NULL) +
-    scale_y_continuous(labels = NULL) +
+    scale_y_continuous(labels = NULL, limits = c(0, 1)) +
     scale_x_discrete(
       labels = c(
         "Deprivation\nIndex",
@@ -260,19 +361,11 @@ di_graph <- function(i) {
         "High School\nGraduation",
         "Housing\nVacancies"
       )
-    ) +
-    scale_fill_manual(
-      breaks = c(FALSE, TRUE), 
-      values = c("orange", "lightblue"),
-      labels = c("Worse than average", "Better than average")
-      ) +
+    ) + 
+    guides(fill = "none") + 
     theme_minimal() +
-    theme(
-      plot.title = element_text(hjust = .5),
-      legend.position = "bottom"
-      ) + 
-    geom_text(aes(label = label, y = textloc), size = 4) +
-    annotate("segment", x = 0.5, xend = 7.5, y = 0, yend = 0)
+    theme(plot.title = element_text(hjust = .5)) +
+    geom_text(aes(label = label, y = Textloc), size = 4)
   y
   return(y)
 }
@@ -294,43 +387,51 @@ health_graph <- function(i) {
     filter(
       variable %in% c("AsthmaRegistry", "AsthmaAdmission")) |>
     inner_join(areas[i,]) |>
+    inner_join(select(all_data, County:AsthmaAdmissions, Children)) |>
     mutate(
-      Positive = diff < 0,
-      Positive = factor(Positive, levels = c(FALSE, TRUE)),
       variable = factor(
         variable, 
         levels = c("AsthmaRegistry", "AsthmaAdmission")
-        ),
-      textloc = case_when(
-        diff == max(diff) & diff > 0 ~ .9*diff,
-        diff == min(diff) & diff < 0 ~ diff-(.05*diff),
-        diff > 0 ~ 1.1*diff,
-        TRUE ~ diff+(.05*diff)
+        )
       )
-    )
   
-  y <- ggplot(x, aes(x = variable, y = diff, fill = Positive)) +
+  y <- ggplot(x, aes(x = variable, y = Scale, fill = Shade)) +
     geom_bar(stat = "identity") +
     labs(x = NULL, y = "Per 100 children", title = unique(x$Label), fill = NULL) +
-    scale_y_continuous(labels = NULL) +
-    scale_x_discrete(
-      labels = c(
-        "Asthma\n Registry",
-        "Asthma\nAdmissions"
-      )
-    ) +
-    scale_fill_manual(
-      breaks = c(FALSE, TRUE), 
-      values = c("orange", "lightblue"),
-      labels = c("Worse than average", "Better than average")
+    scale_y_continuous(
+      limits = c(0, 1), 
+      breaks = seq(0, 1, length.out = 13), 
+      labels = seq(0, 120, 10)
       ) +
+    scale_x_discrete(labels = c("Asthma\n Registry", "Asthma\nAdmissions")) +
+    scale_fill_gradient2(
+      limits = c(-1, 1), 
+      high = "red", 
+      low = "blue", 
+      mid = "grey"
+    ) +
+    guides(fill = "none") +
     theme_minimal() +
-    theme(
-      plot.title = element_text(hjust = .5),
-      legend.position = "bottom"
-      ) + 
-    geom_text(aes(label = round(value*100, 1), y = textloc), size = 4) +
-    annotate("segment", x = 0.5, xend = 2.5, y = 0, yend = 0)
+    theme(plot.title = element_text(hjust = .5)) + 
+    geom_text(aes(label = round(value, 1), y = Textloc), size = 4) +
+    annotate(
+      "text", 
+      x = 1, 
+      y = x$Textloc[x$variable == "AsthmaRegistry"] - .05,
+      label = paste0("n = ", mean(x$AsthmaRegistry))
+      ) +
+    annotate(
+      "text", 
+      x = 2, 
+      y = x$Textloc[x$variable == "AsthmaAdmission"] + .05,
+      label = paste0("n = ", mean(x$AsthmaAdmissions))
+    ) +
+    annotate(
+      "text",
+      x = 1.5,
+      y = 1,
+      label = paste0("Children = ", format(mean(x$Children), big.mark = ","))
+    )
   y
   return(y)
 }
@@ -357,17 +458,14 @@ hood_lines <- block_groups(
     ) |>
   group_by(Neighborhood) |>
   summarise(geometry = st_union(geometry)) |>
-  rename(Area = Neighborhood) |>
+  #rename(Area = Neighborhood) |>
   mutate(
     State = "Ohio",
     County = "Hamilton",
-    Centroid = st_centroid(geometry)
+    Centroid = st_centroid(geometry),
+    Level = "Neighborhood"
   ) |>
-  inner_join(select(all_data, Neighborhood, Tier, Municipality) |> 
-               mutate(Area = ifelse(
-                 Neighborhood == "All", Municipality, Neighborhood
-                 ))) |>
-  inner_join(select(areas, -Area)) |>
+  inner_join(areas) |>
   arrange(geoid)
 
 pal <- colorFactor("Blues", domain = all_data$Tier)
