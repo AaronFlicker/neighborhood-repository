@@ -4,6 +4,7 @@ library(leaflegend)
 library(leafpop)
 library(sf)
 library(tidyverse)
+library(tidygeocoder)
 library(tigris)
 
 allocations <- read.csv(
@@ -20,6 +21,92 @@ allocations <- read.csv(
 census <- read.csv("census_data.csv") |>
   mutate(across(Municipality:Neighborhood, \(x) coalesce(x, "All")))
 asthma <- read.csv("asthma.csv")
+
+schools <- read_delim("cps.txt", delim = " ")
+colnames(schools) <- c(LETTERS[1:5], LETTERS[7:13])
+schools2 <- schools |>
+  mutate(
+    Num1 = parse_number(C),
+    Num2 = parse_number(D),
+    Num3 = parse_number(E),
+    Num4 = parse_number(G),
+    Num5 = parse_number(H),
+    Num6 = parse_number(I),
+    Num7 = parse_number(J),
+    Number = coalesce(Num1, Num2),
+    Number = coalesce(Number, Num3),
+    Number = coalesce(Number, Num4),
+    Number = coalesce(Number, Num5),
+    Number = coalesce(Number, Num6),
+    Number = coalesce(Number, Num7),
+    Number = ifelse(B == "Promise", "5425", Number),
+    Name = paste(A, B),
+    Name = ifelse(C == Number, Name, paste(Name, C)),
+    Name = ifelse(Number == C | Number == D, Name, paste(Name, D)),
+    Name  = ifelse(
+      Number == C | Number == D | Number == E,
+      Name,
+      paste(Name, E)
+    ),
+    Name  = ifelse(
+      Number == C | Number == D | Number == E | Number == G,
+      Name,
+      paste(Name, G)
+    ),
+    Name  = ifelse(
+      Number == C | Number == D | Number == E | Number == G | Number == H,
+      Name,
+      paste(Name, H)
+    ),
+    Combo = paste(A, B, C, D, E, G, H, I, J, K, L, M),
+    Combo = str_remove(Combo, Name),
+    Combo = str_remove(Combo, Number),
+    Combo = str_trim(Combo)
+  ) |>
+  separate_wider_delim(
+    Combo, 
+    delim = ",", 
+    names = c("Street", "City", "Rest"), 
+    too_few = "align_start"
+    ) |>
+  mutate(Rest = str_trim(Rest)) |>
+  separate_wider_delim(
+    Rest, 
+    delim = " ", 
+    names = c("State", "Zip"), 
+    too_many = "drop"
+    ) |>
+  mutate(
+    City = "Cincinnati",
+    State = "OH",
+    Street = ifelse(B == "Promise", "Winton Ridge Lane", Street),
+    Zip = ifelse(Name == "Mt. Washington School", "45230", Zip),
+    Name = ifelse(B == "Promise", "The Promise Center", Name),
+    Name = ifelse(
+      str_detect(Name, "Gamble Montessori Elementary"),
+      "Gamble Montessori Elementary School",
+      Name
+      ),
+    Name = ifelse(str_detect(Name, "Aiken"), "Aiken High School", Name)
+    ) |>
+  distinct(Name, Number, Street, City, State, Zip) |>
+  filter(
+    !Name %in% c(
+      "Cincinnati Digital Academy", 
+      "Virtual High School",
+      "Hospital/Satellite Program Office"
+      )
+    ) |>
+  mutate(StreetNum = paste(Number, Street))
+
+geocoded <- geocode(
+  schools2,
+  street = StreetNum,
+  city = City,
+  state = State,
+  postalcode = Zip,
+  method = "census"
+  )
 
 asthma_cs <- asthma |>
   group_by(State, County, Municipality) |>
@@ -406,16 +493,18 @@ health_graph <- function(i) {
       variable = factor(
         variable, 
         levels = c("AsthmaRegistry", "AsthmaAdmission")
-        )
+        ),
+      Scale = ifelse(Scale > .6, .6, Scale),
+      Textloc = ifelse(Textloc > .6, Textloc-.6, Textloc)
       )
   
   y <- ggplot(x, aes(x = variable, y = Scale, fill = Shade)) +
     geom_bar(stat = "identity") +
     labs(x = NULL, y = "Per 100 children", title = unique(x$Label), fill = NULL) +
     scale_y_continuous(
-      limits = c(0, 1.25), 
-      breaks = seq(0, 1.2, .2), 
-      labels = seq(0, 120, 20)
+      limits = c(0, .63), 
+      breaks = seq(0, .6, .1), 
+      labels = seq(0, 60, 10)
       ) +
     scale_x_discrete(labels = c("Asthma\n Registry", "Asthma\nAdmissions")) +
     scale_fill_gradient2(
@@ -431,13 +520,13 @@ health_graph <- function(i) {
     annotate(
       "text", 
       x = 1, 
-      y = x$Textloc[x$variable == "AsthmaRegistry"] + .06,
+      y = x$Textloc[x$variable == "AsthmaRegistry"] + .03,
       label = paste0("n = ", mean(x$AsthmaRegistry))
       ) +
     annotate(
       "text", 
       x = 2, 
-      y = x$Textloc[x$variable == "AsthmaAdmission"] + .06,
+      y = x$Textloc[x$variable == "AsthmaAdmission"] + .03,
       label = paste0("n = ", mean(x$AsthmaAdmissions))
     ) +
     annotate(
@@ -505,7 +594,8 @@ citymap <- leaflet() |>
     baseGroups = c(
       "Demographics", 
       "Deprivation indicators",
-      "Health indicators"
+      "Health indicators",
+      "Schools"
       ),
     position = "bottomright",
     options = layersControlOptions(collapsed = FALSE)
@@ -536,7 +626,14 @@ citymap <- leaflet() |>
     radius = 4,
     popup = popupGraph(hood_health_popups, height = 300, width = 700),
     group = "Health indicators"
-  ) 
+  ) |>
+  addMarkers(
+    data = geocoded,
+    ~long,
+    ~lat,
+    popup = ~Name,
+    group = "Schools"
+  )
 
 saveWidget(citymap, "city map.html")
   
@@ -599,7 +696,7 @@ muni_lines <- rbind(oh_lines, ky_lines) |>
   inner_join(areas) |>
   arrange(geoid)
 
-muni_map <- leaflet() |>
+leaflet() |>
   addTiles() |>
   addPolygons(
     data = muni_lines,
