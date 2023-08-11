@@ -203,10 +203,11 @@ bench_max <- benchmarks |>
   )
 
 bench_mean <- benchmarks |>
+  ungroup() |>
   filter(
     County == "All" | (Municipality == "Cincinnati" & Neighborhood == "All")
-    ) |>
-  mutate(Level = ifelse(Level == "Municipality", "Neighborhood", "All")) |>
+  ) |>
+  mutate(Level = ifelse(Level == "Municipality", "Neighborhood", "County")) |>
   select(WhiteRate:DeprivationIndex) |>
   pivot_longer(
     cols = c(WhiteRate:AsthmaAdmissionRate, MedianHHIncome, DeprivationIndex),
@@ -214,13 +215,9 @@ bench_mean <- benchmarks |>
     values_to = "Mean"
   )
 
-bench_mean2 <- filter(bench_mean, Level == "All") |>
-  mutate(Level = "County")
-
-benchmarks_all <- bench_mean2 |>
+benchmarks_all <- filter(bench_mean, Level == "County") |>
   mutate(Level = "Municipality") |>
   rbind(bench_mean) |>
-  rbind(bench_mean2) |>
   inner_join(bench_max) |>
   inner_join(bench_min)
 
@@ -374,9 +371,9 @@ demo_graph <- function(i) {
       ) +
     scale_fill_gradient2(
       limits = c(-1, 1), 
-      high = "red", 
-      low = "blue", 
-      mid = "grey"
+      high = "#E64479", 
+      low = "#00AEC7", 
+      mid = "#55575A"
       )
   y
   return(y)
@@ -438,9 +435,9 @@ di_graph <- function(i) {
     geom_bar(stat = "identity") +
     scale_fill_gradient2(
       limits = c(-1, 1), 
-      high = "red", 
-      low = "blue", 
-      mid = "grey"
+      high = "#E64479", 
+      low = "#00AEC7", 
+      mid = "#55575A"
       ) +
     labs(x = NULL, y = NULL, title = unique(x$Label), fill = NULL) +
     scale_y_continuous(labels = NULL, limits = c(0, 1)) +
@@ -511,9 +508,9 @@ health_graph <- function(i) {
     scale_x_discrete(labels = c("Asthma\n Registry", "Asthma\nAdmissions")) +
     scale_fill_gradient2(
       limits = c(-1, 1), 
-      high = "red", 
-      low = "blue", 
-      mid = "grey"
+      high = "#E64479", 
+      low = "#00AEC7", 
+      mid = "#55575A"
     ) +
     guides(fill = "none") +
     theme_minimal() +
@@ -573,7 +570,10 @@ hood_lines <- block_groups(
   inner_join(areas) |>
   arrange(geoid)
 
-pal <- colorFactor("Blues", domain = all_data$Tier)
+pal <- colorFactor(
+  c("#76BC44", "#A1CA3C", "#9BD3DD", "#CA5699", "#83286B"), 
+  domain = all_data$Tier
+  )
 
 citymap <- leaflet() |>
   addTiles() |>
