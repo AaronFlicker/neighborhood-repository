@@ -9,17 +9,6 @@ library(sf)
 
 con <- dbConnect(odbc::odbc(), "ClarityProd")
 
-# births <- read_excel(
-#   "births.xlsx",
-#   col_types = c("text", "date", "skip", "numeric", "numeric", rep("skip", 10))
-#   ) |>
-#   filter(year(calendar_dt) == 2022) |>
-#   group_by(Neighborhood) |>
-#   summarise(
-#     Births = sum(NumBirths, na.rm = TRUE),
-#     PrematureBirths = sum(NumGestAgeLT37, na.rm = TRUE)
-#     )
-
 ## Allocation of Hamilton County census block groups
 allocations <- read.csv(
   "input data/neighborhood bg allocations.csv",

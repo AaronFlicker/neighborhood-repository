@@ -149,6 +149,8 @@ all_data <- filter(asthma, Neighborhood != "All") |>
       NA, 
       AsthmaAdmissionRate
     ),
+    AsthmaRegistryRate = coalesce(AsthmaRegistryRate, 0),
+    AsthmaAdmissionRate = coalesce(AsthmaAdmissionRate, 0),
     Tier = case_when(
       DeprivationIndex >= .6 ~ "Highest",
       DeprivationIndex >= .475 ~ "Higher",
@@ -602,7 +604,7 @@ citymap <- leaflet() |>
     ) |>
   addCircleMarkers(
     data = hood_lines$Centroid,
-    color = "red",
+    color = "#E64479",
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
@@ -611,7 +613,7 @@ citymap <- leaflet() |>
   ) |>
   addCircleMarkers(
     data = hood_lines$Centroid,
-    color = "red",
+    color = "#E64479",
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
@@ -620,7 +622,7 @@ citymap <- leaflet() |>
   ) |>
   addCircleMarkers(
     data = hood_lines$Centroid,
-    color = "red",
+    color = "#E64479",
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
@@ -724,7 +726,7 @@ muni_map <- leaflet() |>
   ) |>
   addCircleMarkers(
     data = muni_lines$Centroid,
-    color = "red",
+    color = "#E64479",
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
@@ -733,7 +735,7 @@ muni_map <- leaflet() |>
   ) |>
   addCircleMarkers(
     data = muni_lines$Centroid,
-    color = "red",
+    color = "#E64479",
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
@@ -742,7 +744,7 @@ muni_map <- leaflet() |>
   ) |>
   addCircleMarkers(
     data = muni_lines$Centroid,
-    color = "red",
+    color = "#E64479",
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
@@ -750,7 +752,7 @@ muni_map <- leaflet() |>
     group = "Health indicators"
   ) 
 
-saveWidget(muni_map, "muni map.html")
+#saveWidget(muni_map, "muni map.html")
 
 county_lines <- counties(
   state = c("OH", "KY", "IN")
@@ -794,7 +796,7 @@ county_map <- leaflet() |>
   ) |>
   addCircleMarkers(
     data = county_lines$Centroid,
-    color = "red",
+    color = "#E64479",
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
@@ -803,7 +805,7 @@ county_map <- leaflet() |>
   ) |>
   addCircleMarkers(
     data = county_lines$Centroid,
-    color = "red",
+    color = "#E64479",
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
@@ -812,7 +814,7 @@ county_map <- leaflet() |>
   ) |>
   addCircleMarkers(
     data = muni_lines$Centroid,
-    color = "red",
+    color = "#E64479",
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
