@@ -354,4 +354,109 @@ asthma <- rbind(hooded1, hooded2) |>
     AsthmaRegistry = sum(Registry),
     AsthmaAdmissions = sum(Admission)
   )
-write_csv(asthma, "asthma.csv")
+
+#write_csv(asthma, "asthma.csv")
+
+pharms <- dbGetQuery(con, "
+  SELECT pharmacy_id
+        ,pharmacy_name
+        ,record_state_name
+    FROM hpceclarity.bmi.rx_phr
+    WHERE record_state_name is null or record_state_name = 'Active'
+                     ") 
+
+pharms2 <- pharms |>
+  separate_wider_delim(
+    pharmacy_name, 
+    delim = "-", 
+    names = c("name", "name2", "name3"), 
+    too_many = "merge",
+    too_few = "align_start"
+    ) |>
+  separate_wider_delim(
+    name3, 
+    delim = "--", 
+    names = c("name3", "name4", "name5"), 
+    too_few = "align_start",
+    too_many = "merge"
+    ) |>
+  mutate(
+    name2 = ifelse(name2 == "", name3, name2),
+    comma = str_detect(name2, ","),
+    city = str_trim(ifelse(comma, name2, name3))
+    ) |>
+  separate_wider_delim(
+    city,
+    delim = "-",
+    names = c("city", "city2", "city3", "city4", "city5"),
+    too_few = "align_start"
+  ) |>
+  mutate(
+    comma = str_detect(city, ","),
+    city = str_trim(ifelse(comma, city, city2)),
+    comma = str_detect(city, ","),
+    city = case_when(
+      comma ~ city,
+      str_detect(city3, ",") ~ city3,
+      str_detect(city4, ",") ~ city4,
+      str_detect(city5, ",") ~ city5,
+      TRUE ~ city
+    )
+  ) |>
+  filter(str_detect(city, ",")) |>
+  separate_wider_delim(
+    city,
+    delim = ",",
+    names = c("City", "State"),
+    too_many = "drop"
+  ) |>
+  mutate(State = str_trim(State)) |>
+  filter(State %in% c("OH", "IN", "KY")) |>
+  separate_wider_delim(
+    name3,
+    delim = " AT ",
+    names = c("Address", "Address2"),
+    too_few = "align_start",
+    too_many = "merge"
+  ) |>
+  mutate(
+    Address = str_trim(Address),
+    num = parse_number(Address),
+    num = as.character(num),
+    added = str_starts(Address, num),
+    Address = ifelse(added, Address, str_trim(name4)),
+    num = as.character(parse_number(Address)),
+    added = str_starts(Address, num),
+    Address = ifelse(is.na(added), str_trim(city2), Address),
+    num = as.character(parse_number(Address)),
+    added = str_starts(Address, num),
+    Address = ifelse(added, Address, str_trim(city3)),
+    num = as.character(parse_number(Address)),
+    added = str_starts(Address, num)
+    ) |>
+  filter(added, !is.na(added)) |>
+  select(pharmacy_id, name, Address, City, State)
+
+geocoded_pharm <- geocode(
+  pharms2,
+  street = Address,
+  city = City,
+  state = State,
+  method = "census"
+) |>
+  filter(!is.na(lat))
+
+geocoded_pharm2 <- st_as_sf(
+  geocoded_pharm, 
+  coords = c("long", "lat"), 
+  crs = "NAD83"
+  )
+
+pharm_points <- rbind(oh_munis, ky_munis) |>
+  rbind(in_munis) |>
+  st_as_sf() |>
+  st_join(geocoded_pharm2, left = FALSE) |>
+  as_tibble() |>
+  select(pharmacy_id) |>
+  inner_join(as_tibble(geocoded_pharm2))
+
