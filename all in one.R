@@ -14,52 +14,6 @@ library(tigris)
 library(sf)
 options(tigris_use_cache = TRUE)
 
-bg_var_list <-c(
-  paste0("B01001_00", c(1, 3:6)),
-  paste0("B01001_0", 27:30),
-  paste0("B02001_00", 2:3),
-  "B03002_012",
-  paste0("B11005_00", 1:2),
-  "B15003_001",
-  paste0("B15003_0", 17:25),
-  paste0("B16004_00", c(1, 3, 7, 8)),
-  paste0("B16004_0", c(12, 13, 17, 18, 22, 23, 25, 29, 30, 34, 35, 39, 
-                       40, 44, 45, 47, 51, 52, 56, 57, 61, 62, 66, 67)),
-  paste0("B17010_00", 1:2),
-  "B19049_001",
-  paste0("B25002_00", c(1, 3)),
-  paste0("B27010_0", c(17, 33, 50, 66))
-)
-
-cat_frame <- data.frame(
-  variable = sort(c(bg_var_list, "B19058_002")),
-  category = c(
-    "Population",
-    rep("Children", 8),
-    "White",
-    "Black",
-    "Hispanic",
-    "Households",
-    "HHWithChildren",
-    "Age25",
-    rep("HighSchool", 9),
-    "Age5",
-    "English",
-    rep("LimitedEnglish", 8),
-    "English",
-    rep("LimitedEnglish", 8),
-    "English",
-    rep("LimitedEnglish", 8),
-    "Families",
-    "Poverty",
-    "MedianHHIncome",
-    "Assistance",
-    "HousingUnits",
-    "Vacant",
-    rep("Uninsured", 4)
-  )
-)
-
 ## List of census tract deprivation indexes
 di <- read.csv(
   "input data/deprivation index all tracts 2021.csv",
@@ -160,6 +114,133 @@ for (i in 1:nrow(oki)){
   oki$Tract[i] <- paste0(prefix, oki$TractA[i], oki$TractB[i], suffix)
 }
 oki$GEOID <- paste0(oki$CountyCode, oki$Tract)
+
+schools <- read_delim("cps.txt", delim = " ")
+colnames(schools) <- c(LETTERS[1:5], LETTERS[7:13])
+schools2 <- schools |>
+  mutate(
+    Num1 = parse_number(C),
+    Num2 = parse_number(D),
+    Num3 = parse_number(E),
+    Num4 = parse_number(G),
+    Num5 = parse_number(H),
+    Num6 = parse_number(I),
+    Num7 = parse_number(J),
+    Number = coalesce(Num1, Num2),
+    Number = coalesce(Number, Num3),
+    Number = coalesce(Number, Num4),
+    Number = coalesce(Number, Num5),
+    Number = coalesce(Number, Num6),
+    Number = coalesce(Number, Num7),
+    Number = ifelse(B == "Promise", "5425", Number),
+    Name = paste(A, B),
+    Name = ifelse(C == Number, Name, paste(Name, C)),
+    Name = ifelse(Number == C | Number == D, Name, paste(Name, D)),
+    Name  = ifelse(
+      Number == C | Number == D | Number == E,
+      Name,
+      paste(Name, E)
+    ),
+    Name  = ifelse(
+      Number == C | Number == D | Number == E | Number == G,
+      Name,
+      paste(Name, G)
+    ),
+    Name  = ifelse(
+      Number == C | Number == D | Number == E | Number == G | Number == H,
+      Name,
+      paste(Name, H)
+    ),
+    Combo = paste(A, B, C, D, E, G, H, I, J, K, L, M),
+    Combo = str_remove(Combo, Name),
+    Combo = str_remove(Combo, Number),
+    Combo = str_trim(Combo)
+  ) |>
+  separate_wider_delim(
+    Combo, 
+    delim = ",", 
+    names = c("Street", "City", "Rest"), 
+    too_few = "align_start"
+  ) |>
+  mutate(Rest = str_trim(Rest)) |>
+  separate_wider_delim(
+    Rest, 
+    delim = " ", 
+    names = c("State", "Zip"), 
+    too_many = "drop"
+  ) |>
+  mutate(
+    City = "Cincinnati",
+    State = "OH",
+    Street = ifelse(B == "Promise", "Winton Ridge Lane", Street),
+    Zip = ifelse(Name == "Mt. Washington School", "45230", Zip),
+    Name = ifelse(B == "Promise", "The Promise Center", Name),
+    Name = ifelse(
+      str_detect(Name, "Gamble Montessori Elementary"),
+      "Gamble Montessori Elementary School",
+      Name
+    ),
+    Name = ifelse(str_detect(Name, "Aiken"), "Aiken High School", Name)
+  ) |>
+  distinct(Name, Number, Street, City, State, Zip) |>
+  filter(
+    !Name %in% c(
+      "Cincinnati Digital Academy", 
+      "Virtual High School",
+      "Hospital/Satellite Program Office"
+    )
+  ) |>
+  mutate(
+    Address = paste(Number, Street),
+    Type = "School"
+    ) |>
+  select(-c(Street, Number))
+
+bg_var_list <-c(
+  paste0("B01001_00", c(1, 3:6)),
+  paste0("B01001_0", 27:30),
+  paste0("B02001_00", 2:3),
+  "B03002_012",
+  paste0("B11005_00", 1:2),
+  "B15003_001",
+  paste0("B15003_0", 17:25),
+  paste0("B16004_00", c(1, 3, 7, 8)),
+  paste0("B16004_0", c(12, 13, 17, 18, 22, 23, 25, 29, 30, 34, 35, 39, 
+                       40, 44, 45, 47, 51, 52, 56, 57, 61, 62, 66, 67)),
+  paste0("B17010_00", 1:2),
+  "B19049_001",
+  paste0("B25002_00", c(1, 3)),
+  paste0("B27010_0", c(17, 33, 50, 66))
+)
+
+cat_frame <- data.frame(
+  variable = sort(c(bg_var_list, "B19058_002")),
+  category = c(
+    "Population",
+    rep("Children", 8),
+    "White",
+    "Black",
+    "Hispanic",
+    "Households",
+    "HHWithChildren",
+    "Age25",
+    rep("HighSchool", 9),
+    "Age5",
+    "English",
+    rep("LimitedEnglish", 8),
+    "English",
+    rep("LimitedEnglish", 8),
+    "English",
+    rep("LimitedEnglish", 8),
+    "Families",
+    "Poverty",
+    "MedianHHIncome",
+    "Assistance",
+    "HousingUnits",
+    "Vacant",
+    rep("Uninsured", 4)
+  )
+)
 
 hamco_bg <- get_acs(
   geography = "block group",
@@ -633,8 +714,10 @@ for_geocoder <- unique_adds |>
 #docker run --rm -v ${PWD}:/tmp ghcr.io/degauss-org/geocoder:3.0.2 for_degauss.csv
 
 geocoded <- read.csv("for_degauss_geocoded_v3.0.2.csv") |>
-  filter(precision == "range", 
-         geocode_result != "imprecise_geocode") |>
+  filter(
+    precision == "range", 
+    geocode_result != "imprecise_geocode"
+    ) |>
   st_as_sf(coords = c("lon", "lat"), crs = 'NAD83', remove = FALSE)
 
 oki_munis <- oki_cs |>
@@ -745,6 +828,134 @@ all_data <- filter(asthma, Neighborhood != "All") |>
       Municipality != "All" ~ Municipality,
       TRUE ~ County
     )
+  )
+
+pharms <- dbGetQuery(con, "
+  SELECT pharmacy_id
+        ,pharmacy_name
+        ,record_state_name
+    FROM hpceclarity.bmi.rx_phr
+    WHERE record_state_name is null or record_state_name = 'Active'
+                     ") 
+
+to_geocode <- pharms |>
+  separate_wider_delim(
+    pharmacy_name, 
+    delim = "-", 
+    names = c("Name", "name2", "name3"), 
+    too_many = "merge",
+    too_few = "align_start"
+  ) |>
+  separate_wider_delim(
+    name3, 
+    delim = "--", 
+    names = c("name3", "name4", "name5"), 
+    too_few = "align_start",
+    too_many = "merge"
+  ) |>
+  mutate(
+    name2 = ifelse(name2 == "", name3, name2),
+    comma = str_detect(name2, ","),
+    city = str_trim(ifelse(comma, name2, name3))
+  ) |>
+  separate_wider_delim(
+    city,
+    delim = "-",
+    names = c("city", "city2", "city3", "city4", "city5"),
+    too_few = "align_start"
+  ) |>
+  mutate(
+    comma = str_detect(city, ","),
+    city = str_trim(ifelse(comma, city, city2)),
+    comma = str_detect(city, ","),
+    city = case_when(
+      comma ~ city,
+      str_detect(city3, ",") ~ city3,
+      str_detect(city4, ",") ~ city4,
+      str_detect(city5, ",") ~ city5,
+      TRUE ~ city
+    )
+  ) |>
+  filter(str_detect(city, ",")) |>
+  separate_wider_delim(
+    city,
+    delim = ",",
+    names = c("City", "State"),
+    too_many = "drop"
+  ) |>
+  mutate(State = str_trim(State)) |>
+  filter(State %in% c("OH", "IN", "KY")) |>
+  separate_wider_delim(
+    name3,
+    delim = " AT ",
+    names = c("Address", "Address2"),
+    too_few = "align_start",
+    too_many = "merge"
+  ) |>
+  mutate(
+    Address = str_trim(Address),
+    num = parse_number(Address),
+    num = as.character(num),
+    added = str_starts(Address, num),
+    Address = ifelse(added, Address, str_trim(name4)),
+    num = as.character(parse_number(Address)),
+    added = str_starts(Address, num),
+    Address = ifelse(is.na(added), str_trim(city2), Address),
+    num = as.character(parse_number(Address)),
+    added = str_starts(Address, num),
+    Address = ifelse(added, Address, str_trim(city3)),
+    num = as.character(parse_number(Address)),
+    added = str_starts(Address, num),
+    Type = "Pharmacy",
+    Zip = NA
+  ) |>
+  filter(added, !is.na(added)) |>
+  select(Name, Address, City, State, Type, Zip) |>
+  rbind(schools2)
+
+geocoded_points <- geocode(
+  to_geocode,
+  street = Address,
+  city = City,
+  state = State,
+  postalcode = Zip,
+  method = "census"
+  ) 
+
+undone <- filter(geocoded_points, is.na(lat)) |>
+  geocode(
+    street = Address,
+    city = City,
+    state = State,
+    postalcode = Zip,
+    method = "geoapify"
+  )
+
+points_all <- undone |>
+  rename(
+    lat = lat...9,
+    long = long...10
+    ) |>
+  select(Name, Type, lat, long, Address) |>
+  rbind(select(geocoded_points, Name, lat, long, Type, Address)) |>
+  filter(!is.na(lat))
+  
+points_all2 <- points_all |>
+  st_as_sf(
+    coords = c("long", "lat"),
+    crs = "NAD83"
+  ) |>
+  inner_join(points_all, multiple = "all") |>
+  unique()
+
+points <- oki_cs |>
+  st_as_sf() |>
+  distinct(Municipality, County, State, geometry) |>
+  st_join(points_all2, left = FALSE)
+
+cinci_points <- filter(
+  points, 
+  Municipality %in% c("Cincinnati", "Norwood") | Type == "School"
   )
 
 benchmarks <- all_data |>
@@ -876,12 +1087,19 @@ rates <- rbind(rates, inner_subs) |>
 areas <- distinct(rates, Level, County, Municipality, Neighborhood) |>
   mutate(
     Label = case_when(
-      Neighborhood != "All" ~ Neighborhood,
-      Municipality != "All" ~ Municipality,
+      !is.na(Neighborhood) ~ Neighborhood,
+      !is.na(Municipality) ~ Municipality,
       TRUE ~ County
     )
   ) |>
   inner_join(select(all_data, County, Label, Tier)) |>
+  mutate(
+    Label = ifelse(
+      is.na(Neighborhood) & is.na(Municipality),
+      paste(Label, "County", sep = " "),
+      Label
+    )
+  ) |>
   arrange(Level, Label) |>
   ungroup() |>
   mutate(geoid = row_number())
@@ -1148,197 +1366,25 @@ pal <- colorFactor(
   domain = all_data$Tier
 )
 
-schools <- read_delim("cps.txt", delim = " ")
-colnames(schools) <- c(LETTERS[1:5], LETTERS[7:13])
-schools2 <- schools |>
-  mutate(
-    Num1 = parse_number(C),
-    Num2 = parse_number(D),
-    Num3 = parse_number(E),
-    Num4 = parse_number(G),
-    Num5 = parse_number(H),
-    Num6 = parse_number(I),
-    Num7 = parse_number(J),
-    Number = coalesce(Num1, Num2),
-    Number = coalesce(Number, Num3),
-    Number = coalesce(Number, Num4),
-    Number = coalesce(Number, Num5),
-    Number = coalesce(Number, Num6),
-    Number = coalesce(Number, Num7),
-    Number = ifelse(B == "Promise", "5425", Number),
-    Name = paste(A, B),
-    Name = ifelse(C == Number, Name, paste(Name, C)),
-    Name = ifelse(Number == C | Number == D, Name, paste(Name, D)),
-    Name  = ifelse(
-      Number == C | Number == D | Number == E,
-      Name,
-      paste(Name, E)
+cinci_icons <- icons(
+  iconUrl = ifelse(
+    cinci_points$Type == "School", 
+    "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png",
+    "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-yellow.png"
     ),
-    Name  = ifelse(
-      Number == C | Number == D | Number == E | Number == G,
-      Name,
-      paste(Name, G)
-    ),
-    Name  = ifelse(
-      Number == C | Number == D | Number == E | Number == G | Number == H,
-      Name,
-      paste(Name, H)
-    ),
-    Combo = paste(A, B, C, D, E, G, H, I, J, K, L, M),
-    Combo = str_remove(Combo, Name),
-    Combo = str_remove(Combo, Number),
-    Combo = str_trim(Combo)
-  ) |>
-  separate_wider_delim(
-    Combo, 
-    delim = ",", 
-    names = c("Street", "City", "Rest"), 
-    too_few = "align_start"
-  ) |>
-  mutate(Rest = str_trim(Rest)) |>
-  separate_wider_delim(
-    Rest, 
-    delim = " ", 
-    names = c("State", "Zip"), 
-    too_many = "drop"
-  ) |>
-  mutate(
-    City = "Cincinnati",
-    State = "OH",
-    Street = ifelse(B == "Promise", "Winton Ridge Lane", Street),
-    Zip = ifelse(Name == "Mt. Washington School", "45230", Zip),
-    Name = ifelse(B == "Promise", "The Promise Center", Name),
-    Name = ifelse(
-      str_detect(Name, "Gamble Montessori Elementary"),
-      "Gamble Montessori Elementary School",
-      Name
-    ),
-    Name = ifelse(str_detect(Name, "Aiken"), "Aiken High School", Name)
-  ) |>
-  distinct(Name, Number, Street, City, State, Zip) |>
-  filter(
-    !Name %in% c(
-      "Cincinnati Digital Academy", 
-      "Virtual High School",
-      "Hospital/Satellite Program Office"
-    )
-  ) |>
-  mutate(StreetNum = paste(Number, Street))
-
-geocoded_schools <- geocode(
-  schools2,
-  street = StreetNum,
-  city = City,
-  state = State,
-  postalcode = Zip,
-  method = "census"
+  iconWidth = 20,
+  iconHeight = 30
 )
 
-pharms <- dbGetQuery(con, "
-  SELECT pharmacy_id
-        ,pharmacy_name
-        ,record_state_name
-    FROM hpceclarity.bmi.rx_phr
-    WHERE record_state_name is null or record_state_name = 'Active'
-                     ") 
-
-pharms2 <- pharms |>
-  separate_wider_delim(
-    pharmacy_name, 
-    delim = "-", 
-    names = c("name", "name2", "name3"), 
-    too_many = "merge",
-    too_few = "align_start"
-  ) |>
-  separate_wider_delim(
-    name3, 
-    delim = "--", 
-    names = c("name3", "name4", "name5"), 
-    too_few = "align_start",
-    too_many = "merge"
-  ) |>
-  mutate(
-    name2 = ifelse(name2 == "", name3, name2),
-    comma = str_detect(name2, ","),
-    city = str_trim(ifelse(comma, name2, name3))
-  ) |>
-  separate_wider_delim(
-    city,
-    delim = "-",
-    names = c("city", "city2", "city3", "city4", "city5"),
-    too_few = "align_start"
-  ) |>
-  mutate(
-    comma = str_detect(city, ","),
-    city = str_trim(ifelse(comma, city, city2)),
-    comma = str_detect(city, ","),
-    city = case_when(
-      comma ~ city,
-      str_detect(city3, ",") ~ city3,
-      str_detect(city4, ",") ~ city4,
-      str_detect(city5, ",") ~ city5,
-      TRUE ~ city
-    )
-  ) |>
-  filter(str_detect(city, ",")) |>
-  separate_wider_delim(
-    city,
-    delim = ",",
-    names = c("City", "State"),
-    too_many = "drop"
-  ) |>
-  mutate(State = str_trim(State)) |>
-  filter(State %in% c("OH", "IN", "KY")) |>
-  separate_wider_delim(
-    name3,
-    delim = " AT ",
-    names = c("Address", "Address2"),
-    too_few = "align_start",
-    too_many = "merge"
-  ) |>
-  mutate(
-    Address = str_trim(Address),
-    num = parse_number(Address),
-    num = as.character(num),
-    added = str_starts(Address, num),
-    Address = ifelse(added, Address, str_trim(name4)),
-    num = as.character(parse_number(Address)),
-    added = str_starts(Address, num),
-    Address = ifelse(is.na(added), str_trim(city2), Address),
-    num = as.character(parse_number(Address)),
-    added = str_starts(Address, num),
-    Address = ifelse(added, Address, str_trim(city3)),
-    num = as.character(parse_number(Address)),
-    added = str_starts(Address, num)
-  ) |>
-  filter(added, !is.na(added)) |>
-  select(pharmacy_id, name, Address, City, State)
-
-geocoded_pharm <- geocode(
-  pharms2,
-  street = Address,
-  city = City,
-  state = State,
-  method = "census"
-) |>
-  filter(!is.na(lat))
-
-geocoded_pharm2 <- st_as_sf(
-  geocoded_pharm, 
-  coords = c("long", "lat"), 
-  crs = "NAD83"
+muni_icons <- icons(
+  iconUrl = ifelse(
+    points$Type == "School", 
+    "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png",
+    "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-yellow.png"
+  ),
+  iconWidth = 20,
+  iconHeight = 30
 )
-
-pharm_points <- oki_cs |>
-  st_as_sf() |>
-  distinct(Municipality, County, State, geometry) |>
-  st_join(geocoded_pharm2, left = FALSE) |>
-  as_tibble() |>
-  rename(State = State.x) |>
-  select(pharmacy_id, Municipality, State, County) |>
-  inner_join(as_tibble(geocoded_pharm), join_by(pharmacy_id))
-
-cinci_pharm <- filter(pharm_points, Municipality %in% c("Cincinnati", "Norwood"))
 
 citymap <- leaflet() |>
   addTiles() |>
@@ -1362,8 +1408,7 @@ citymap <- leaflet() |>
       "Demographics", 
       "Deprivation indicators",
       "Health indicators",
-      "Schools",
-      "Pharmacies"
+      "Schools and Pharmacies"
     ),
     position = "bottomright",
     options = layersControlOptions(collapsed = FALSE)
@@ -1396,19 +1441,13 @@ citymap <- leaflet() |>
     group = "Health indicators"
   ) |>
   addMarkers(
-    data = geocoded_schools,
+    data = cinci_points,
     ~long,
     ~lat,
+    icon = cinci_icons,
     popup = ~Name,
-    group = "Schools"
-  ) |>
-  addMarkers(
-    data = cinci_pharm,
-    ~long,
-    ~lat,
-    popup = ~name,
-    group = "Pharmacies"
-  )
+    group = "Schools and Pharmacies"
+  ) 
 
 #saveWidget(citymap, "city map.html")
 
@@ -1446,7 +1485,7 @@ muni_map <- leaflet() |>
       "Demographics", 
       "Deprivation indicators",
       "Health indicators",
-      "Pharmacies"
+      "Schools and Pharmacies"
     ),
     position = "bottomright",
     options = layersControlOptions(collapsed = FALSE)
@@ -1479,12 +1518,13 @@ muni_map <- leaflet() |>
     group = "Health indicators"
   ) |>
   addMarkers(
-    data = pharm_points,
+    data = points,
     ~long,
     ~lat,
-    popup = ~name,
-    group = "Pharmacies"
-  )
+    icon = muni_icons,
+    popup = ~Name,
+    group = "Schools and Pharmacies"
+  ) 
 
 #saveWidget(muni_map, "muni map.html")
 
@@ -1516,7 +1556,8 @@ county_map <- leaflet() |>
     baseGroups = c(
       "Demographics", 
       "Deprivation indicators",
-      "Health indicators"
+      "Health indicators",
+      "Schools and Pharmacies"
     ),
     position = "bottomright",
     options = layersControlOptions(collapsed = FALSE)
@@ -1540,13 +1581,21 @@ county_map <- leaflet() |>
     group = "Deprivation indicators"
   ) |>
   addCircleMarkers(
-    data = muni_lines$Centroid,
+    data = county_lines$Centroid,
     color = "#E64479",
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
     popup = popupGraph(county_health_popups, height = 300, width = 700),
     group = "Health indicators"
+  ) |>
+  addMarkers(
+    data = points,
+    ~long,
+    ~lat,
+    icon = muni_icons,
+    popup = ~Name,
+    group = "Schools and Pharmacies"
   ) 
 
 #saveWidget(county_map, "county map.html")

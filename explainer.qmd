@@ -12,26 +12,29 @@ editor: visual
 
 First is a list of deprivation indexes for every census tract in the United States.
 
-```{r, warning=FALSE, message=FALSE}
-library(tidyverse)
-library(lubridate)
-library(tidycensus)
-library(odbc)
+```{r}
+#| warning = FALSE, message = FALSE
 library(DBI)
-library(readxl)
-library(tidygeocoder)
-library(tigris)
-library(sf)
-library(tigris)
+library(htmlwidgets)
+library(leaflegend)
 library(leaflet)
 library(leafpop)
-library(leaflegend)
+library(lubridate)
+library(odbc)
+library(readxl)
+library(sf)
+library(tidycensus)
+library(tidygeocoder)
+library(tidyverse)
+library(tigris)
+library(sf)
+options(tigris_use_cache = TRUE)
 
 ## List of census tract deprivation indexes
 di <- read.csv(
   "input data/deprivation index all tracts 2021.csv",
-  colClasses = c("numeric", "character", rep("NULL", 6))
-  )
+  colClasses = c("numeric", "character", rep("numeric", 6))
+)
 
 ```
 
@@ -41,20 +44,19 @@ head(di)
 
 These are calculated based on the most recent available five-year Census American Community Survey data. As of this writing, that is for the years 2017-21.
 
-The crosswalk between census tracts and Cincinnati neighborhoods. This is derived from the city's [Statistical Neighborhood Approximations](https://www.cincinnati-oh.gov/planning/maps-and-data/census-demographics/2020-census-data/), which define which census tracts and block groups between to each neighborhood, and the University of Missouri's [Census Data Center](https://mcdc.missouri.edu/applications/geocorr.html), which provides a crosswalk between census tracts and municipalities.
+The crosswalk between census tracts and Cincinnati neighborhoods is derived from the city's [Statistical Neighborhood Approximations](https://www.cincinnati-oh.gov/planning/maps-and-data/census-demographics/2020-census-data/), which define which census tracts and block groups between to each neighborhood, and the University of Missouri's [Census Data Center](https://mcdc.missouri.edu/applications/geocorr.html), which provides a crosswalk between census tracts and municipalities.
 
 ```{r}
 allocations <- read.csv(
-  "input data/neighborhood bg allocations.csv",
+  "~/neighborhood bg allocations.csv",
   colClasses = c(
     "character", 
     rep("NULL", 3), 
     "character", 
     "numeric", 
     "character"
-    )
   )
-
+)
 ```
 
 ```{r, echo=FALSE}
@@ -66,9 +68,8 @@ Because the deprivation index is calculated only at the census tract level, the 
 The Missouri Census Data Center also is the source for a similar list linking census tracts to the municipalities in the eight-county Cincinnati area.
 
 ```{r}
-
 oki <- read.csv(
-  "input data/oki allocations.csv",
+  "oki allocations.csv",
   col.names = c(
     "CountyCode",
     "Tract",
@@ -86,23 +87,23 @@ oki <- read.csv(
     "character", 
     "NULL", 
     "numeric"
-    )
-  ) |>
+  )
+) |>
   filter(
     County %in% c(
-    "Dearborn IN",
-    "Boone KY",
-    "Campbell KY",
-    "Kenton KY",
-    "Butler OH",
-    "Clermont OH",
-    "Hamilton OH",
-    "Warren OH"
+      "Dearborn IN",
+      "Boone KY",
+      "Campbell KY",
+      "Kenton KY",
+      "Butler OH",
+      "Clermont OH",
+      "Hamilton OH",
+      "Warren OH"
     )
-    ) |>
+  ) |>
   separate_wider_delim(
     Municipality, delim = "CCD", names = "Municipality", too_many = "drop"
-    ) |>
+  ) |>
   separate_wider_delim(
     Municipality, delim = " city", names = "Municipality", too_many = "drop"
   ) |>
@@ -117,22 +118,22 @@ oki <- read.csv(
     delim = ".", 
     names = c("TractA", "TractB"),
     too_few = "align_start"
-    ) |>
+  ) |>
   mutate(
     Municipality = str_remove(Municipality, "The Village of"),
     Municipality = str_to_title(Municipality),
     Municipality = str_trim(Municipality),
     Tract = NA
-    ) |>
+  ) |>
   separate_wider_delim(County, delim = " ", names = c("County", "State")) |>
   mutate(
     State = case_when(
       State == "OH" ~ "Ohio",
       State == "KY" ~ "Kentucky",
       TRUE ~ "Indiana"
-      ),
+    ),
     TractB = coalesce(TractB, "")
-    )
+  )
 
 for (i in 1:nrow(oki)){
   if (str_length(oki$TractA[i]) < 4){
@@ -151,1364 +152,15 @@ oki$GEOID <- paste0(oki$CountyCode, oki$Tract)
 
 ```
 
-```{r, echo=FALSE}
+```{r}
+#| echo = FALSE
 head(select(oki, County:Allocation, GEOID))
 ```
 
-# Census data
-
-The census data itself can be downloaded directly to R Studio using the tidycensus package. We will download 62 specific variables, some of which will be combined into broader categories.
+A list of Cincinnati Public Schools and their addresses is taken from the [district website](https://www.cps-k12.org/findaschool).
 
 ```{r}
 #| warning = FALSE, message = FALSE
-# vars <- load_variables(2021, "acs5")
-# bg_vars <- filter(vars, geography == "block group")
-# tract_vars <- filter(vars, geography == "tract") |>
-#   left_join(bg_vars, join_by(label, concept))
-
-bg_var_list <-c(
-  paste0("B01001_00", c(1, 3:6)),
-  paste0("B01001_0", 27:30),
-  paste0("B02001_00", 2:3),
-  "B03002_012",
-  paste0("B11005_00", 1:2),
-  "B15003_001",
-  paste0("B15003_0", 17:25),
-  paste0("B16004_00", c(1, 3, 7, 8)),
-  paste0("B16004_0", c(12, 13, 17, 18, 22, 23, 25, 29, 30, 34, 35, 39, 
-                       40, 44, 45, 47, 51, 52, 56, 57, 61, 62, 66, 67)),
-  paste0("B17010_00", 1:2),
-  "B19049_001",
-  paste0("B25002_00", c(1, 3)),
-  paste0("B27010_0", c(17, 33, 50, 66))
-  )
-
-cat_frame <- data.frame(
-  variable = sort(c(bg_var_list, "B19058_002")),
-  category = c(
-    "Population",
-    rep("Children", 8),
-    "White",
-    "Black",
-    "Hispanic",
-    "Households",
-    "HHWithChildren",
-    "Age25",
-    rep("HighSchool", 9),
-    "Age5",
-    "English",
-    rep("LimitedEnglish", 8),
-    "English",
-    rep("LimitedEnglish", 8),
-    "English",
-    rep("LimitedEnglish", 8),
-    "Families",
-    "Poverty",
-    "MedianHHIncome",
-    "Assistance",
-    "HousingUnits",
-    "Vacant",
-    rep("Uninsured", 4)
-    )
-  )
-```
-
-First, the data is downloaded for Cincinnati neighborhoods. Because some of these neighborhoods cross census tract lines, the data is selected at the block group level.
-
-```{r}
-#| message = FALSE
-hamco_bg <- get_acs(
-  geography = "block group",
-  variables = bg_var_list,
-  county = "Hamilton",
-  state = "OH"
-  ) |>
-  inner_join(cat_frame) |>
-  group_by(GEOID, category) |>
-  summarise(estimate = sum(estimate)) |>
-  pivot_wider(
-    id_cols = GEOID,
-    names_from = category,
-    values_from = estimate
-  ) |>
-  mutate(Income = MedianHHIncome*Households) |>
-  inner_join(allocations, multiple = "all") |>
-  mutate(across(c(Age25:LimitedEnglish, Population:Income), \(x) x*Allocation))
-```
-
-```{r, echo=FALSE}
-head(hamco_bg)
-```
-
-Because some of the block groups cross city lines, the totals are prorated. For example, about 62% of block group 390610046023 is in Mt. Washington, with the rest in Anderson Township. To estimate the totals for Mt. Washington, the totals for this block group are multiplied by the share of it that is in Cincinnati.
-
-The median household income must be handled differently because it is not a simple total. The neighborhood median income is estimated in the following manner:
-
-1.  For each census block group for which income data are available, multiply the median household income by the number of households.
-
-2.  Total this figure and the number of households at the neighborhood level.
-
-3.  Divide the neighborhood income figure by the number of households in the neighborhood.
-
-```{r}
-hood_inc <- hamco_bg |>
-  filter(
-    Municipality == "Cincinnati",
-    !is.na(Income)
-    ) |>
-  group_by(Neighborhood) |>
-  summarise(
-    Income = sum(Income),
-    IncomeHH = sum(Households)
-    )
-```
-
-```{r, echo=FALSE}
-head(hood_inc)
-```
-
-This is essentially a weighted average of the median household income in the neighborhood's constituent block groups.
-
-Next, all of the other categories are calculated at the neighborhood level.
-
-```{r, message=FALSE}
-cinci_hood <- filter(hamco_bg, Municipality == "Cincinnati") |>
-  ungroup() |>
-  select(Age25:LimitedEnglish, Population:White, Municipality, Neighborhood) |>
-  group_by(Municipality, Neighborhood) |>
-  summarise(across(Age25:White, sum)) |>
-  left_join(hood_inc)
-```
-
-```{r, echo=FALSE}
-head(cinci_hood)
-```
-
-One constituent element of the deprivation index -- the proportion of households that receive public assistance -- is not available at the block group level, so it must be estimated using tract-level data.
-
-```{r}
-#| message = FALSE
-hh_tract <- filter(hamco_bg, Municipality == "Cincinnati") |>
-  mutate(Tract = str_trunc(GEOID, 11, "right", ellipsis = "")) |>
-  group_by(Tract, Neighborhood) |>
-  summarise(Households = sum(Households)) |>
-  group_by(Tract) |>
-  mutate(
-    TractHH = sum(Households),
-    Allocation = Households/TractHH
-    )
-
-hood_assistance <- get_acs(
-  geography = "tract",
-  variables = "B19058_002",
-  county = "Hamilton",
-  state = "OH"
-  ) |>
-  inner_join(
-    select(hh_tract, -Households), 
-    by = c("GEOID" = "Tract"),
-    multiple = "all"
-    ) |>
-  mutate(
-    Assistance = estimate*Allocation,
-    HH = TractHH*Allocation
-    ) |>
-  group_by(Neighborhood) |>
-  summarise(Assistance = sum(Assistance))
-
-cinci_hood <- inner_join(cinci_hood, hood_assistance) |>
-  mutate(
-    County = "Hamilton",
-    State = "Ohio",
-    across(Age25:Assistance, round)
-    ) 
-```
-
-Next, the same data are downloaded at the county subdivision level for our eight counties of interest. Generally, county subdivisions are local government units. However, two municipalities in our region (Loveland and Milford) cross county lines. These municipalities will have multiple county subdivisions in the data set that must be combined to obtain municipal-level data.
-
-```{r}
-#| message = FALSE
-oh_cs <- get_acs(
-  geography = "county subdivision",
-  variables = c(bg_var_list, "B19058_002"),
-  state = "OH",
-  county = c("Clermont", "Warren", "Butler", "Hamilton"),
-  year = 2021
-  )
-
-ky_cs <- get_acs(
-  geography = "county subdivision",
-  variables = c(bg_var_list, "B19058_002"),
-  state = "KY",
-  county = c("Boone", "Campbell", "Kenton"),
-  year = 2021
-  )
-
-in_cs <- get_acs(
-  geography = "county subdivision",
-  variables = c(bg_var_list, "B19058_002"),
-  state = "IN",
-  county = "Dearborn",
-  year = 2021
-  )
-
-oki_cs <- rbind(oh_cs, ky_cs) |>
-  rbind(in_cs) |>
-  inner_join(cat_frame) |>
-  separate_wider_delim(
-    NAME, 
-    delim = ", ", 
-    names = c("Municipality", "County", "State")
-    ) |>
-  mutate(
-    Municipality = str_remove(Municipality, " city"),
-    Municipality = str_remove(Municipality, " village"),
-    Municipality = str_remove(Municipality, " CCD"),
-    Municipality = str_remove(Municipality, "The Village of "),
-    Municipality = str_to_title(Municipality),
-    County = str_remove(County, " County"),
-    County = case_when(
-      Municipality == "Loveland" ~ "Hamilton",
-      Municipality == "Milford" ~ "Clermont",
-      TRUE ~ County
-    )
-  ) |>
-  filter(
-    !is.na(estimate),
-    estimate > 0
-    )
-
-oki_no_income <- filter(oki_cs, category != "MedianHHIncome") |>
-  group_by(Municipality, County, State, category) |>
-  summarise(estimate = sum(estimate)) |>
-  pivot_wider(
-    id_cols = c(Municipality, State, County),
-    names_from = category,
-    values_from = estimate
-  ) |>
-  mutate(
-    across(c(Age25:LimitedEnglish, Population:White), \(x) coalesce(x, 0)),
-    Neighborhood = NA
-    )
-
-oki_income <- filter(oki_cs, category %in% c("MedianHHIncome", "Households")) |>
-  pivot_wider(
-    id_cols = c(GEOID, Municipality, County, State),
-    names_from = category,
-    values_from = estimate
-  ) |>
-  mutate(Income = MedianHHIncome*Households) |>
-  group_by(Municipality, County, State) |>
-  summarise(
-    Income = sum(Income),
-    IncomeHH = sum(Households)
-  ) |>
-  inner_join(oki_no_income)
-```
-
-```{r, echo=FALSE}
-head(oki_no_income)
-```
-
-The same data points are then downloaded at the county level for the eight county region. These are then totaled to obtain data for the eight-county metro area.
-
-```{r}
-#| message = FALSE
-oh_county <- get_acs(
-  geography = "county",
-  variables = c(bg_var_list, "B19058_002"),
-  state = "OH",
-  county = c("Clermont", "Warren", "Butler", "Hamilton"),
-  year = 2021
-  )
-
-ky_county <- get_acs(
-  geography = "county",
-  variables = c(bg_var_list, "B19058_002"),
-  state = "KY",
-  county = c("Campbell", "Kenton", "Boone"),
-  year = 2021
-  )
-
-in_county <- get_acs(
-  geography = "county",
-  variables = c(bg_var_list, "B19058_002"),
-  state = "IN",
-  county = "Dearborn",
-  year = 2021
-  )
-
-oki_county <- rbind(oh_county, ky_county) |>
-  rbind(in_county) |>
-  inner_join(cat_frame) |>
-  separate_wider_delim(
-    cols = NAME, 
-    delim = ", ", 
-    names = c("County", "State")
-  ) |>
-  mutate(County = str_remove(County, " County")) |>
-  group_by(County, State, category) |>
-  summarise(estimate = sum(estimate)) |>
-  pivot_wider(
-    id_cols = c(County, State), 
-    names_from = category, 
-    values_from = estimate
-  ) |>
-  mutate(
-    Income = MedianHHIncome*Households,
-    IncomeHH = Households,
-    Municipality = NA,
-    Neighborhood = NA
-    ) |>
-  select(-MedianHHIncome)
-
-metro <- oki_county |>
-  ungroup() |>
-  summarise(across(Age25:IncomeHH, sum)) |>
-  mutate(
-    County = "All",
-    State = "All",
-    Municipality = NA,
-    Neighborhood = NA
-  )
-```
-
-```{r}
-#| echo = FALSE
-metro
-```
-
-Next, the deprivation index is estimated for each Cincinnati neighborhood. Because the deprivation index is calculated at the census tract level, the block group population data for Cincinnati must be rolled up to that level. The neighborhood's deprivation index is the average, weighted by population, of the deprivation indexes of its constituent census tracts.
-
-```{r}
-#| message = FALSE
-hood_di <- filter(hamco_bg, Municipality == "Cincinnati") |>
-  mutate(census_tract_fips = str_trunc(GEOID, 11, "right", ellipsis = "")) |>
-  group_by(census_tract_fips, Neighborhood, Municipality) |>
-  summarise(Population = sum(Population)) |>
-  group_by(Municipality, Neighborhood) |>
-  mutate(
-    HoodPop = sum(Population),
-    TractWeight = Population/HoodPop
-  ) |>
-  inner_join(di) |>
-  mutate(DIWeight = TractWeight*dep_index) |>
-  summarise(DeprivationIndex = sum(DIWeight)) |>
-  mutate(
-    County = "Hamilton",
-    State = "Ohio"
-  )
-```
-
-```{r, echo=FALSE}
-head(hood_di)
-```
-
-To do the same for other counties in the area, the tract-level populations are are required.
-
-```{r}
-#| message = FALSE
-oh_tract <- get_acs(
-  geography = "tract",
-  variables = "B01001_001",
-  state = "OH",
-  county = c("Clermont", "Warren", "Butler", "Hamilton"),
-  year = 2021
-  )
-
-ky_tract <- get_acs(
-  geography = "tract",
-  variables = "B01001_001",
-  state = "KY",
-  county = c("Kenton", "Campbell", "Boone"),
-  year = 2021
-  )
-
-in_tract <- get_acs(
-  geography = "tract",
-  variables = "B01001_001",
-  state = "IN",
-  county = c("Dearborn"),
-  year = 2021
-  )
-```
-
-Using the weighted average method, the deprivation index is then estimated for municipalities, counties, and the eight-county area as a whole.
-
-```{r}
-#| message = FALSE
-cs_di <- rbind(oh_tract, ky_tract) |>
-  rbind(in_tract) |>
-  full_join(select(oki, County:Allocation, GEOID), multiple = "all") |>
-  mutate(Population = estimate*Allocation) |>
-  inner_join(
-    select(di, census_tract_fips, dep_index), 
-    by = c("GEOID" = "census_tract_fips")
-    ) |>
-  mutate(
-    County = case_when(
-      Municipality == "Loveland" ~ "Hamilton",
-      Municipality == "Milford" ~ "Clermont",
-      TRUE ~ County
-    )
-  ) |>
-  group_by(Municipality, County, State) |>
-  mutate(
-    TownPop = sum(Population),
-    TractShare = Population/TownPop,
-    DIWeight = TractShare*dep_index
-    ) |>
-  summarise(DeprivationIndex = sum(DIWeight)) |>
-  mutate(Neighborhood = NA)
-```
-
-```{r}
-#| echo = FALSE
-head(cs_di)
-```
-
-```{r}
-#| message = FALSE
-county_di <- select(oki_income, Municipality, County, State, Population) |>
-  inner_join(cs_di) |>
-  mutate(DIWeight = DeprivationIndex*Population) |>
-  group_by(State, County) |>
-  summarise(
-    DIWeight = sum(DIWeight),
-    Population = sum(Population)
-  ) |>
-  mutate(
-    DeprivationIndex = DIWeight/Population,
-    DIWeight = DeprivationIndex*Population,
-    Municipality = NA,
-    Neighborhood = NA
-  ) |>
-  select(-DIWeight)
-```
-
-```{r}
-#| echo = FALSE
-head(county_di)
-```
-
-```{r}
-metro_di <- county_di |>
-  mutate(DIWeight = DeprivationIndex*Population) |>
-  ungroup() |>
-  summarise(
-    Population = sum(Population),
-    DIWeight = sum(DIWeight)
-    ) |>
-  mutate(
-    DeprivationIndex = DIWeight/Population,
-    State = "All",
-    County = "All",
-    Municipality = NA,
-    Neighborhood = NA
-    ) |>
-  select(DeprivationIndex:Neighborhood)
-```
-
-```{r, echo=FALSE}
-#| echo = FALSE
-metro_di
-```
-
-The Deprivation Index figures are combined with the census data, and then rates are calculated.
-
-```{r}
-#| message=FALSE
-di_all <- rbind(hood_di, cs_di) |>
-  rbind(select(county_di, -Population)) |>
-  rbind(metro_di)
-
-census <- rbind(cinci_hood, oki_income) |>
-  rbind(oki_county) |>
-  ungroup() |>
-  rbind(metro) |>
-  inner_join(di_all) |>
-  mutate(
-    BlackRate = Black/Population,#<1>
-    WhiteRate = White/Population,#<2>
-    HispanicRate = Hispanic/Population,#<3>
-    ChildRate = Children/Population,#<4>
-    ChildHHRate = HHWithChildren/Households,#<5>
-    OtherLanguage = Age5-English,#<6>
-    OtherLanguageRate = OtherLanguage/Age5,#<6>
-    LimitedEnglishRate = LimitedEnglish/Age5,#<7>
-    UninsuredRate = Uninsured/Population,#<8>
-    HighSchoolRate = HighSchool/Age25,#<9>
-    AssistanceRate = Assistance/Households,#<10>
-    PovertyRate = Poverty/Families,#<11>
-    VacancyRate = Vacant/HousingUnits,#<12>
-    MedianHHIncome = Income/IncomeHH#<13>
-  ) |>
-  select(
-    State, County, Municipality, Neighborhood,
-    Population, White, WhiteRate, Black, BlackRate, Hispanic, HispanicRate,
-    Children, ChildRate, Uninsured, UninsuredRate,
-    Households, HHWithChildren, ChildHHRate, Assistance, AssistanceRate, 
-    MedianHHIncome,
-    Age25, HighSchool, HighSchoolRate,
-    Families, Poverty, PovertyRate,
-    HousingUnits, Vacant, VacancyRate,
-    Age5, OtherLanguage, OtherLanguageRate, LimitedEnglish, LimitedEnglishRate
-    ) |>
-  full_join(di_all)
-```
-
-1.  Proportion of population that is Black
-
-2.  Proportion of population that is white
-
-3.  Proportion of population that is Hispanic/Latino
-
-4.  Proportion of population that is children under 18
-
-5.  Proportion of households that include a child under 18
-
-6.  Proportion of the population over age 5 that speaks a language other than English at home
-
-7.  Proportion of the population over age 5 with no or limited English-speaking ability
-
-8.  Proportion of the population that lacks health insurance
-
-9.  Proportion of the population over age 25 with a high school diploma or equivalent
-
-10. Proportion of households that receive public assistance
-
-11. The poverty rate
-
-12. The housing vacancy rate
-
-13. The median household income
-
-```{r}
-#| echo = FALSE
-head(census)
-```
-
-# CCHMC health data
-
-The addresses associated with children on the asthma registry and with children admitted for asthma are available from the HPCEClarity database.
-
-```{r}
-con <- dbConnect(odbc::odbc(), "ClarityProd")
-
-asthma_reg <- dbGetQuery(con, "
-  SELECT DISTINCT p.pat_id
-                ,CAST(p.birth_date AS DATE) AS birth_date
-				        ,p.add_line_1
-				        ,p.add_line_2
-				        ,p.city
-				        ,p.state
-				        ,p.zip
-				        ,p.county
-  FROM hpceclarity.bmi.registry_config c
-    INNER JOIN hpceclarity.bmi.reg_data_hx_membership m
-      ON c.registry_id = m.registry_id
-    INNER JOIN hpceclarity.bmi.registry_data_info d
-      ON m.record_id = d.record_id
-    INNER JOIN hpceclarity.bmi.patient p
-      ON p.pat_id = d.networked_id
-  WHERE c.registry_name like '%asthma%'
-    AND p.add_line_1 not like '%222 E%'
-    AND m.status_c = 1
-                  ") |>
-  mutate(
-    Registry = 1,
-    Admission = 0,
-    Age = as.numeric(today()-birth_date)/365.25
-    ) |>
-  filter(Age < 18)
-
-asthma_admits <- dbGetQuery(con, "
-  SELECT pat_id
-        ,pat_addr_1 as add_line_1
-        ,pat_addr_2 as add_line_2
-        ,pat_city as city
-        ,pat_state as state
-        ,pat_zip as zip
-        ,countyfp
-    FROM temptable.dbo.health_equity_network_encounters
-    WHERE year(hosp_admsn_time) = 2022
-      AND asthma_admission = 1
-      AND add_line_1 not like '%222 E%'
-                            ") |>
-  mutate(
-    Admission = 1,
-    Registry = 0,
-    county = case_when(
-      state == "Ohio" ~ case_when(
-        countyfp == "061" ~ "Hamilton",
-        countyfp == "017" ~ "Butler",
-        countyfp == "025" ~ "Clermont",
-        countyfp == "165" ~ "Warren",
-        TRUE ~ NA
-      ),
-      state == "Kentucky" ~ case_when(
-        countyfp == "015" ~ "Boone",
-        countyfp == "037"~ "Campbell",
-        countyfp == "117" ~ "Kenton",
-        TRUE ~ NA
-      ),
-      state == "Indiana" ~ ifelse(countyfp == "029", "Dearborn", NA),
-      TRUE ~ NA
-      )
-    )
-```
-
-Once unique addresses in the eight-county area are identified for these patients, the addresses are geocoded using the DeGAUSS app.
-
-```{r}
-adds <- asthma_admits |>
-  filter(
-    !is.na(county) | 
-      (state %in% c("Ohio", "Indiana", "Kentucky") & is.na(countyfp))
-    ) |>
-  select(-countyfp) |>
-  rbind(
-    asthma_reg |>
-      select(-c(birth_date, Age)) |>
-      filter(
-        (state == "Ohio" & 
-           county %in% c("HAMILTON", "CLERMONT", "BUTLER", "WARREN")) |
-          (state == "Kentucky" & county %in% c("BOONE", "CAMPBELL", "KENTON")) |
-          (state == "Indiana" & county == "DEARBORN") |
-          (state %in% c("Ohio", "Indiana", "Kentucky") & is.na(county))
-      )
-  ) |>
-  mutate(
-    City = str_to_upper(city),
-    Zip = str_trunc(zip, 5, "right", ellipsis = ""),
-    Address = coalesce(add_line_1, add_line_2),
-    Address = str_to_upper(Address),
-    ) |>
-  separate_wider_delim(
-    Address, delim = "APT", names = "Address", too_many = "drop"
-  ) |>
-  separate_wider_delim(
-    Address, delim = "#", names = "Address", too_many = "drop"
-  ) |>
-  separate_wider_delim(
-    Address, delim = "UNIT", names = "Address", too_many = "drop"
-  )
-
-unique_adds <- adds |>
-  distinct(City, state, Zip, Address) |>
-  mutate(ID = row_number())
-
-for_geocoder <- unique_adds |>
-  mutate(
-    state = case_when(
-      state == "Ohio" ~ "OH",
-      state == "Kentucky" ~ "KY",
-      TRUE ~ "IN"
-    ),
-    address = paste(Address, City, state, Zip, sep = ", ")
-    ) |>
-  select(ID, address)
-#write_csv(for_geocoder, "for_degauss.csv")
-```
-
-DeGAUSS determines latitude and longitude coordinates for the address. Addresses are considered a match if they are geocoded with precision at the level of a range of street numbers.
-
-```{r}
-geocoded <- read.csv("for_degauss_geocoded_v3.0.2.csv") |>
-  filter(
-    precision == "range", 
-    geocode_result != "imprecise_geocode") |>
-  st_as_sf(coords = c("lon", "lat"), crs = 'NAD83', remove = FALSE)
-```
-
-To place the latitude and longitude coordinates in a jurisdiction, shapefiles of the county subdivision are obtained using the tigris package in R. Joining the geocoded addresses to the shapefiles using the sf package will, in most cases, place the address in the appropriate jurisdiction.
-
-```{r}
-#| message = FALSE, output = FALSE
-oh_munis <- county_subdivisions(
-  state = "OH",
-  county = c("Hamilton", "Butler", "Clermont", "Warren"),
-  year = 2021
-  ) |>
-  mutate(State = "Ohio")
-
-ky_munis <- county_subdivisions(
-  state = "KY",
-  county = c("Boone", "Campbell", "Kenton"),
-  year = 2021
-  ) |>
-  mutate(State = "Kentucky")
-
-in_munis <- county_subdivisions(
-  state = "IN",
-  county = "Dearborn",
-  year = 2021
-  ) |>
-  mutate(State = "Indiana")
-
-oki_munis <- rbind(oh_munis, ky_munis) |>
-  rbind(in_munis) |>
-  separate_wider_delim(
-    NAMELSAD, delim = "village", names = "Municipality", too_many = "drop"
-  ) |>
-  separate_wider_delim(
-    Municipality, delim = "city", names = "Municipality", too_many = "drop"
-  ) |>
-  separate_wider_delim(
-    Municipality, delim = "CCD", names = "Municipality", too_many = "drop"
-  ) |>
-  separate_wider_delim(
-    Municipality, delim = ",", names = "Municipality", too_many = "drop"
-  ) |>
-  mutate(
-    Municipality = str_to_title(Municipality),
-    Municipality = str_trim(Municipality),
-    Municipality = ifelse(
-      str_detect(Municipality, "Indian Hill"), "Indian Hill", Municipality
-    ),
-    County = case_when(
-      COUNTYFP == "017" ~ "Butler",
-      COUNTYFP == "025" ~ "Clermont",
-      COUNTYFP == "061" ~ "Hamilton",
-      COUNTYFP == "165" ~ "Warren",
-      COUNTYFP == "015" ~ "Boone",
-      COUNTYFP == "037" ~ "Campbell",
-      COUNTYFP == "117" ~ "Kenton",
-      COUNTYFP == "029" ~ "Dearborn",
-      TRUE ~ NA
-    )
-  ) |>
-  select(Municipality, County, State, geometry) |>
-  st_as_sf() |>
-  st_join(geocoded) |>
-  group_by(ID) |>
-  mutate(count = n())
-```
-
-If the address is placed in one and only one municipality, and that municipality is not Cincinnati, then the geocoding process is complete.
-
-```{r}
-#| message = FALSE
-muni_singles <- filter(oki_munis, count == 1)
-cinci1 <- filter(muni_singles, Municipality == "Cincinnati") |>
-  as_tibble() |>
-  select(ID) |>
-  inner_join(geocoded) |>
-  select(ID, geometry) |>
-  st_as_sf()
-
-hooded1 <- filter(muni_singles, Municipality != "Cincinnati") |>
-  as_tibble() |>
-  select(ID, State, County, Municipality) |>
-  mutate(Neighborhood = NA)
-```
-
-For those placed in more than jurisdiction, the location is then mapped to a census tract. If that census tract is associated with only one jurisdiction, then the address can be placed in that jurisdiction.
-
-```{r}
-#| message = FALSE, output = FALSE
-muni_multi <- filter(oki_munis, count > 1) |>
-  select(Municipality:ID) |>
-  inner_join(oki, multiple = "all")
-
-oh_tracts <- tracts(
-  state = "OH",
-  county = c("Hamilton", "Warren", "Clermont", "Butler"),
-  year = 2021
-  )
-
-ky_tracts <- tracts(
-  state = "KY",
-  county = c("Kenton", "Boone", "Campbell"),
-  year = 2021
-  )
-
-in_tracts <- tracts(
-  state = "IN",
-  county = "Dearborn",
-  year = 2021
-  )
-
-hooded2 <- rbind(oh_tracts, ky_tracts) |>
-  rbind(in_tracts) |>
-  st_join(distinct(muni_multi, ID, geometry)) |>
-  distinct(ID, geometry, GEOID) |>
-  as_tibble() |>
-  inner_join(muni_multi) |>
-  select(ID, State, County, Municipality) |>
-  mutate(Neighborhood = NA)
-```
-
-For addresses located in Cincinnati, first the address is matched to a census block group, and then the block group to a neighborhood.
-
-```{r}
-#| message = FALSE, output = FALSE
-hamco_bg <- block_groups(
-  state = "OH",
-  county = "Hamilton",
-  year = 2021
-  )
-
-cinci_bg <- st_join(cinci1, hamco_bg) |>
-  inner_join(filter(allocations, Municipality == "Cincinnati")) |>
-  distinct(ID, Municipality, Neighborhood) |>
-  group_by(ID) |>
-  mutate(count = n()) |>
-  arrange(-count, ID)
-
-hooded3 <- filter(cinci_bg, count == 1) |>
-  select(-count) |>
-  mutate(
-    County = "Hamilton",
-    State = "Ohio"
-    )
-```
-
-Finally, geocoded addresses are matched back to individual patients, and the number of patients and admissions tallied for each neighborhood and county subdivision.
-
-```{r}
-#| message=FALSE
-asthma <- rbind(hooded1, hooded2) |>
-  rbind(hooded3) |>
-  inner_join(unique_adds) |>
-  inner_join(adds, multiple = "all") |>
-  group_by(State, County, Municipality, Neighborhood) |>
-  summarise(
-    AsthmaRegistry = sum(Registry),
-    AsthmaAdmissions = sum(Admission)
-  )
-```
-
-Admissions and patients then are totaled for Cincinnati, and at the county and metropolitan levels.
-
-```{r}
-#| message = FALSE
-asthma_cs <- asthma |>
-  group_by(State, County, Municipality) |>
-  summarise(across(AsthmaRegistry:AsthmaAdmissions, sum)) |>
-  mutate(Neighborhood = "All")
-
-asthma_county <- asthma |>
-  group_by(State, County) |>
-  summarise(across(AsthmaRegistry:AsthmaAdmissions, sum)) |>
-  mutate(
-    Municipality = "All",
-    Neighborhood = "All"
-  )
-
-asthma_total <- asthma |>
-  summarise(across(AsthmaRegistry:AsthmaAdmissions, sum)) |>
-  mutate(
-    County = "All",
-    State = "All",
-    Neighborhood = "All",
-    Municipality = "All"
-  )
-```
-
-These totals are combined with the Census and Deprivation Index data compiled earlier. This allows rates of asthma prevalence and admissions to be calculated.
-
-```{r}
-#| message = FALSE
-all_data <- filter(asthma, Neighborhood != "All") |>
-  rbind(asthma_cs) |>
-  rbind(asthma_county) |>
-  rbind(asthma_total) |>
-  right_join(census) |>
-  mutate(
-    across(AsthmaRegistry:AsthmaAdmissions, \(x) coalesce(x, 0)),
-    AsthmaRegistryRate = AsthmaRegistry/Children,
-    AsthmaRegistryRate = ifelse(
-      is.infinite(AsthmaRegistryRate), 
-      NA, 
-      AsthmaRegistryRate
-      ),
-    AsthmaAdmissionRate = AsthmaAdmissions/Children,
-    AsthmaAdmissionRate = ifelse(
-      is.nan(AsthmaAdmissionRate), 
-      NA, 
-      AsthmaAdmissionRate
-    ),
-    AsthmaRegistryRate = coalesce(AsthmaRegistryRate, 0),
-    AsthmaAdmissionRate = coalesce(AsthmaAdmissionRate, 0),
-    Tier = case_when(#<1>
-      DeprivationIndex >= .6 ~ "Highest",
-      DeprivationIndex >= .475 ~ "Higher",
-      DeprivationIndex >= .35 ~ "Medium",
-      DeprivationIndex >= .225 ~ "Lower",
-      TRUE ~ "Lowest"
-    ),
-    Tier = factor(
-      Tier, 
-      levels = c("Lowest", "Lower", "Medium", "Higher", "Highest")
-      ),
-    Level = case_when(#<2>
-      Neighborhood != "All" ~ "Neighborhood",
-      Municipality != "All" ~ "Municipality",
-      County != "All" ~ "County",
-      TRUE ~ "All"
-    ),
-    Label = case_when(#<3>
-      Neighborhood != "All" ~ Neighborhood,
-      Municipality != "All" ~ Municipality,
-      TRUE ~ County
-    )
-  )
-```
-
-1.  The Tier variable determines the color of the area on the map based on the area's Deprivation Index.
-2.  The Level variable is used to determine benchmarks that individual areas will be measured against.
-3.  The Label variable will be the name used to designate the area on the map.
-
-# Determining benchmarks
-
-The map is intended to show the ways in which neighborhoods and municipalities differ from each other and from the area as a whole. This requires calculating the minimum, maximum, and mean values for each of the statistical elements. Because there will be three maps, three sets of benchmarks are needed. The municipal and county maps will have the same means, which in both cases are the averages for the entire eight-county area.
-
-```{r}
-#| message = FALSE
-benchmarks <- all_data |>
-  ungroup() |>
-  select(
-    County:Neighborhood, 
-    ends_with("Rate"), 
-    Level, 
-    MedianHHIncome, 
-    DeprivationIndex
-    )
-
-bench_min <- benchmarks |>
-  group_by(Level) |>
-  summarise(across(WhiteRate:DeprivationIndex, \(x) min(x, na.rm = TRUE))) |>
-  pivot_longer(
-    cols = WhiteRate:DeprivationIndex,
-    names_to = "variable",
-    values_to = "Minimum"
-  )
-
-bench_max <- benchmarks |>
-  group_by(Level) |>
-  summarise(across(WhiteRate:DeprivationIndex, \(x) max(x, na.rm = TRUE))) |>
-  pivot_longer(
-    cols = WhiteRate:DeprivationIndex,
-    names_to = "variable",
-    values_to = "Maximum"
-  )
-
-bench_mean <- benchmarks |>
-  ungroup() |>
-  filter(
-    County == "All" | (Municipality == "Cincinnati" & Neighborhood == "All")
-  ) |>
-  mutate(Level = ifelse(Level == "Municipality", "Neighborhood", "County")) |>
-  select(WhiteRate:DeprivationIndex) |>
-  pivot_longer(
-    cols = c(WhiteRate:AsthmaAdmissionRate, MedianHHIncome, DeprivationIndex),
-    names_to = "variable",
-    values_to = "Mean"
-  )
-
-benchmarks_all <- filter(bench_mean, Level == "County") |>
-  mutate(Level = "Municipality") |>
-  rbind(bench_mean) |>
-  inner_join(bench_max) |>
-  inner_join(bench_min)
-```
-
-The metrics for individual areas can then be compared to these benchmarks.
-
-```{r}
-#| message = FALSE
-rates <- filter(all_data, County != "All") |>
-  select(
-    Level,
-    County,
-    Municipality,
-    Neighborhood, 
-    ends_with("Rate"), 
-    MedianHHIncome, 
-    DeprivationIndex
-    ) |>
-  pivot_longer(
-    cols = WhiteRate:DeprivationIndex,
-    names_to = "variable"
-  ) |>
-  inner_join(benchmarks_all) |>
-  mutate(
-    Shade = ifelse(#<1>
-      value > Mean, 
-      (value-Mean)/(Maximum-Mean), 
-      (value-Mean)/(Mean-Minimum)
-      ),
-    Shade = ifelse(is.infinite(Shade), NA, Shade),
-    Scale = ifelse(#<2>
-      variable %in% c(
-        "WhiteRate", 
-        "BlackRate", 
-        "HispanicRate", 
-        "ChildRate", 
-        "ChildHHRate",
-        "OtherLanguageRate",
-        "LimitedEnglishRate",
-        "AsthmaRegistryRate",
-        "AsthmaAdmissionRate"
-      ), 
-      value,
-      (value-Minimum)/(Maximum-Minimum)
-    ),
-    Textloc = ifelse(Scale > .9, Scale - .025, Scale + .04)
-  )
-```
-
-1.  The Shade variable determines the ratio of the metric's difference from the mean to the range of the metric. It is used to determine the color of the bars on the graphics on the map.
-2.  Scale is either the raw value of the metric or the ratio of the metric to the range of the metric. It will determine the height of the bars.
-
-Norwood, St. Bernard, and Elmwood Place are suburbs that are surrounded by Cincinnati and will appear on both the Cincinnati neighborhood and municipality maps. Their metrics, therefore, need to be compared to both sets of benchmarks.
-
-```{r}
-#| message = FALSE
-inner_subs <- filter(
-  rates, 
-  Municipality %in% c("Norwood", "St. Bernard", "Elmwood Place")
-  ) |>
-  select(County:value) |>
-  mutate(
-    Level = "Neighborhood",
-    Neighborhood = Municipality
-    ) |>
-  inner_join(benchmarks_all) |>
-  mutate(
-    Shade = ifelse(
-      value > Mean, 
-      (value-Mean)/(Maximum-Mean), 
-      (value-Mean)/(Mean-Minimum)
-    ),
-    Scale = ifelse(
-      variable %in% c(
-        "WhiteRate", 
-        "BlackRate", 
-        "HispanicRate", 
-        "ChildRate", 
-        "ChildHHRate",
-        "OtherLanguageRate",
-        "LimitedEnglishRate",
-        "AsthmaRegistryRate",
-        "AsthmaAdmissionRate"
-      ),
-      value,
-      (value-Minimum)/(Maximum-Minimum)
-      ),
-    Textloc = ifelse(Scale > .9, Scale - .025, Scale + .04)
-  )
-
-rates <- rbind(rates, inner_subs) |>
-  mutate(variable = str_remove(variable, "Rate"))
-```
-
-In order to create the necessary charts for the map, a list of areas is required. That list will be broken into three, with one list for each map. A function will then iterate over those lists and create the chart for each area.
-
-```{r}
-#| message = FALSE
-areas <- distinct(rates, Level, County, Municipality, Neighborhood) |>
-  mutate(
-    Label = case_when(
-      Neighborhood != "All" ~ Neighborhood,
-      Municipality != "All" ~ Municipality,
-      TRUE ~ County
-    )
-  ) |>
-  inner_join(select(all_data, County, Label, Tier)) |>
-  arrange(Level, Label) |>
-  mutate(geoid = row_number())
-
-hoods <- areas$geoid[areas$Level == "Neighborhood"]
-munis <- areas$geoid[areas$Level == "Municipality"]
-counties <- areas$geoid[areas$Level == "County"]
-```
-
-One function creates the charts for demographic variables.
-
-```{r}
-demo_graph <- function(i) {
-  x <- filter(
-    rates,
-    variable %in% c(
-      "White", 
-      "Black", 
-      "Hispanic", 
-      "Child", 
-      "ChildHH",
-      "OtherLanguage",
-      "LimitedEnglish"
-      )
-  ) |>
-    inner_join(areas[i,]) |>
-    mutate(
-      variable = factor(
-        variable, 
-        levels = c(
-          "White", 
-          "Black", 
-          "Hispanic", 
-          "Child", 
-          "ChildHH", 
-          "OtherLanguage", 
-          "LimitedEnglish"
-          )
-        )
-      )
-  
-  y <- ggplot(x, aes(x = variable, y = Scale, fill = Shade)) +
-    geom_bar(stat = "identity", color = "black") +
-    labs(x = NULL, y = "%", title = unique(x$Label)) +
-    scale_y_continuous(
-      limits = c(0, 1),
-      breaks = seq(0, 1, .2),
-      labels = seq(0, 100, 20)
-    ) +
-    scale_x_discrete(
-      labels = c(
-        "White",
-        "Black",
-        "Hispanic",
-        "Children",
-        "Households\nwith Children",
-        "Language other\nthan English",
-        "Limited\nEnglish"
-      )
-    ) +
-    theme_minimal() +
-    guides(fill = "none") +
-    theme(plot.title = element_text(hjust = .5)) + 
-    geom_text(
-      aes(label = paste0(round(value*100, 1), "%"), y = Textloc), 
-      size = 4
-      ) +
-    scale_fill_gradient2(
-      limits = c(-1, 1), 
-      high = "#E64479", 
-      low = "#00AEC7", 
-      mid = "#55575A"
-      )
-  y
-  return(y)
-} 
-```
-
-This function is then iterated over the lists of neighborhoods, municipalities, and counties, and the charts are stored in three separate lists.
-
-```{r}
-#| message = FALSE
-hood_demo_popups <- lapply(hoods, function(k) {
-  demo_graph(i = k)
-  })
-
-muni_demo_popups <- lapply(munis, function(k){
-  demo_graph(i = k)
-  })
-
-county_demo_popups <- lapply(counties, function(k){
-  demo_graph(i = k)
-  })
-```
-
-A second function creates the charts for the Deprivation Index and its component metrics. That function is iterated over the same three lists.
-
-```{r}
-#| message = FALSE
-di_graph <- function(i) {
-  x <- filter(
-    rates,
-    variable %in% c(
-      "Uninsured", 
-      "Assistance", 
-      "HighSchool", 
-      "Poverty", 
-      "Vacancy", 
-      "MedianHHIncome",
-      "DeprivationIndex"
-      )
-    ) |>
-    inner_join(areas[i,]) |>
-    mutate(
-      variable = factor(
-        variable,
-        levels = c(
-          "DeprivationIndex",
-          "Poverty",
-          "Assistance",
-          "MedianHHIncome",
-          "Uninsured",
-          "HighSchool",
-          "Vacancy"
-        )
-      ),
-      label = case_when(
-        variable == "DeprivationIndex" ~ as.character(round(value, 3)),
-        variable == "MedianHHIncome" ~ 
-          paste0("$", format(round(value), big.mark = ",", trim = TRUE)),
-        TRUE ~ paste0(as.character(round(value*100, 1)), "%")
-        ),
-      Shade = ifelse(
-        variable %in% c("MedianHHIncome", "HighSchool"), 
-        Shade * -1, 
-        Shade
-        )
-      )
-  
-  y <- ggplot(x, aes(x = variable, y = Scale, fill = Shade)) +
-    geom_bar(stat = "identity") +
-    scale_fill_gradient2(
-      limits = c(-1, 1), 
-      high = "#E64479", 
-      low = "#00AEC7", 
-      mid = "#55575A"
-      ) +
-    labs(x = NULL, y = NULL, title = unique(x$Label), fill = NULL) +
-    scale_y_continuous(labels = NULL, limits = c(0, 1)) +
-    scale_x_discrete(
-      labels = c(
-        "Deprivation\nIndex",
-        "Poverty\nRate",
-        "On Public\nAssistance",
-        "Median\nHousehold\nIncome",
-        "No Health\nInsurance",
-        "High School\nGraduation",
-        "Housing\nVacancies"
-      )
-    ) + 
-    guides(fill = "none") + 
-    theme_minimal() +
-    theme(plot.title = element_text(hjust = .5)) +
-    geom_text(aes(label = label, y = Textloc), size = 4)
-  y
-  return(y)
-}
-
-hood_di_popups <- lapply(hoods, function(k) {
-  di_graph(i = k)
-  })
-
-muni_di_popups <- lapply(munis, function(k){
-  di_graph(i = k)
-  })
-
-county_di_popups <- lapply(counties, function(k){
-  di_graph(i = k)
-  })
-```
-
-The final function generates the charts for asthma metrics.
-
-```{r}
-#| message = FALSE
-health_graph <- function(i) {
-  x <- rates |>
-    filter(
-      variable %in% c("AsthmaRegistry", "AsthmaAdmission")) |>
-    inner_join(areas[i,]) |>
-    inner_join(
-      select(
-        all_data, 
-        County, 
-        Municipality, 
-        AsthmaRegistry, 
-        AsthmaAdmissions, 
-        Children, 
-        Label
-        )
-      ) |>
-    mutate(
-      variable = factor(
-        variable, 
-        levels = c("AsthmaRegistry", "AsthmaAdmission")
-        ),
-      Scale = ifelse(Scale > .6, .6, Scale),
-      Textloc = ifelse(Textloc > .6, Textloc-.6, Textloc)
-      )
-  
-  y <- ggplot(x, aes(x = variable, y = Scale, fill = Shade)) +
-    geom_bar(stat = "identity") +
-    labs(x = NULL, y = "Per 100 children", title = unique(x$Label), fill = NULL) +
-    scale_y_continuous(
-      limits = c(0, .63), 
-      breaks = seq(0, .6, .1), 
-      labels = seq(0, 60, 10)
-      ) +
-    scale_x_discrete(labels = c("Asthma\n Registry", "Asthma\nAdmissions")) +
-    scale_fill_gradient2(
-      limits = c(-1, 1), 
-      high = "#E64479", 
-      low = "#00AEC7", 
-      mid = "#55575A"
-    ) +
-    guides(fill = "none") +
-    theme_minimal() +
-    theme(plot.title = element_text(hjust = .5)) +
-    geom_text(aes(label = round(value*100, 1), y = Textloc), size = 4) +
-    annotate(
-      "text", 
-      x = 1, 
-      y = x$Textloc[x$variable == "AsthmaRegistry"] + .03,
-      label = paste0("n = ", mean(x$AsthmaRegistry))
-      ) +
-    annotate(
-      "text", 
-      x = 2, 
-      y = x$Textloc[x$variable == "AsthmaAdmission"] + .03,
-      label = paste0("n = ", mean(x$AsthmaAdmissions))
-    ) +
-    annotate(
-      "text",
-      x = 1.5,
-      y = .6,
-      label = paste0("Children = ", format(mean(x$Children), big.mark = ","))
-    )
-  y
-  return(y)
-}
-
-hood_health_popups <- lapply(hoods, function(k){
-  health_graph(i = k)
-  })
-
-muni_health_popups <- lapply(munis, function(k){
-  health_graph(i = k)
-  })
-
-county_health_popups <- lapply(counties, function(k){
-  health_graph(i = k)
-  })
-```
-
-To determine the boundaries of Cincinnati neighborhoods, Census block group lines are obtained using the Tigris package. Block groups in the same neighborhood are combined using the sf package.
-
-```{r}
-#| message = FALSE
-hood_lines <- block_groups(
-  state = "OH",
-  county = "Hamilton"
-  ) |>
-  inner_join(allocations, multiple = "all") |>
-  filter(
-    Municipality %in% c("Cincinnati", "Norwood", "St. Bernard", "Elmwood Place")
-    ) |>
-  group_by(Neighborhood) |>
-  summarise(geometry = st_union(geometry)) |>
-  rename(Area = Neighborhood) |>
-  mutate(
-    State = "Ohio",
-    County = "Hamilton",
-    Centroid = st_centroid(geometry),
-    Level = "Neighborhood"
-  ) |>
-  inner_join(areas) |>
-  arrange(geoid)
-```
-
-To locate Cincinnati Public Schools on the map, a list of school addresses is geocoded using the Tidygeocoder package.
-
-```{r}
-#| message = FALSE, warning = FALSE
 schools <- read_delim("cps.txt", delim = " ")
 colnames(schools) <- c(LETTERS[1:5], LETTERS[7:13])
 schools2 <- schools |>
@@ -1555,14 +207,14 @@ schools2 <- schools |>
     delim = ",", 
     names = c("Street", "City", "Rest"), 
     too_few = "align_start"
-    ) |>
+  ) |>
   mutate(Rest = str_trim(Rest)) |>
   separate_wider_delim(
     Rest, 
     delim = " ", 
     names = c("State", "Zip"), 
     too_many = "drop"
-    ) |>
+  ) |>
   mutate(
     City = "Cincinnati",
     State = "OH",
@@ -1573,28 +225,1568 @@ schools2 <- schools |>
       str_detect(Name, "Gamble Montessori Elementary"),
       "Gamble Montessori Elementary School",
       Name
-      ),
+    ),
     Name = ifelse(str_detect(Name, "Aiken"), "Aiken High School", Name)
-    ) |>
+  ) |>
   distinct(Name, Number, Street, City, State, Zip) |>
   filter(
     !Name %in% c(
       "Cincinnati Digital Academy", 
       "Virtual High School",
       "Hospital/Satellite Program Office"
-      )
+    )
+  ) |>
+  mutate(
+    Address = paste(Number, Street),
+    Type = "School"
     ) |>
-  mutate(StreetNum = paste(Number, Street))
+  select(-c(Street, Number))
+```
 
-geocoded <- geocode(
-  schools2,
-  street = StreetNum,
+```{r}
+#| echo = FALSE
+head(schools2)
+```
+
+# Census data
+
+The census data itself can be downloaded directly to R Studio using the tidycensus package. These include 62 specific variables, some of which will be combined into broader categories.
+
+```{r}
+#| warning = FALSE, message = FALSE
+
+bg_var_list <-c(
+  paste0("B01001_00", c(1, 3:6)),
+  paste0("B01001_0", 27:30),
+  paste0("B02001_00", 2:3),
+  "B03002_012",
+  paste0("B11005_00", 1:2),
+  "B15003_001",
+  paste0("B15003_0", 17:25),
+  paste0("B16004_00", c(1, 3, 7, 8)),
+  paste0("B16004_0", c(12, 13, 17, 18, 22, 23, 25, 29, 30, 34, 35, 39, 
+                       40, 44, 45, 47, 51, 52, 56, 57, 61, 62, 66, 67)),
+  paste0("B17010_00", 1:2),
+  "B19049_001",
+  paste0("B25002_00", c(1, 3)),
+  paste0("B27010_0", c(17, 33, 50, 66))
+)
+
+cat_frame <- data.frame(
+  variable = sort(c(bg_var_list, "B19058_002")),
+  category = c(
+    "Population",
+    rep("Children", 8),
+    "White",
+    "Black",
+    "Hispanic",
+    "Households",
+    "HHWithChildren",
+    "Age25",
+    rep("HighSchool", 9),
+    "Age5",
+    "English",
+    rep("LimitedEnglish", 8),
+    "English",
+    rep("LimitedEnglish", 8),
+    "English",
+    rep("LimitedEnglish", 8),
+    "Families",
+    "Poverty",
+    "MedianHHIncome",
+    "Assistance",
+    "HousingUnits",
+    "Vacant",
+    rep("Uninsured", 4)
+  )
+)
+```
+
+### Neighborhoods
+
+First, the data is downloaded for Cincinnati neighborhoods. Because some of these neighborhoods cross census tract lines, the data are selected at the more granular block group level.
+
+```{r}
+#| message = FALSE
+hamco_bg <- get_acs(
+  geography = "block group",
+  variables = bg_var_list,
+  county = "Hamilton",
+  state = "OH",
+  geometry = TRUE
+  ) |>
+  inner_join(cat_frame)
+
+hamco_bg2 <- hamco_bg |>
+  as_tibble() |>
+  group_by(GEOID, category) |>
+  summarise(estimate = sum(estimate)) |>
+  pivot_wider(
+    id_cols = GEOID,
+    names_from = category,
+    values_from = estimate
+  ) |>
+  mutate(Income = MedianHHIncome*Households) |>
+  inner_join(allocations, multiple = "all") |>
+  mutate(across(c(Age25:LimitedEnglish, Population:Income), \(x) x*Allocation))
+```
+
+```{r}
+#| echo = FALSE
+head(hamco_bg2)
+```
+
+Because some of the block groups cross city lines, the totals are prorated. For example, about 62% of block group 390610046023 is in Mt. Washington, with the rest in Anderson Township. To estimate the totals for Mt. Washington, the totals for this block group are multiplied by the share of it that is in Cincinnati.
+
+The median household income must be handled differently because it is not a simple total. The neighborhood median income is estimated in the following manner:
+
+-   For each census block group for which income data are available, multiply the median household income by the number of households.
+
+-   Total this figure and the number of households at the neighborhood level.
+
+-   Divide the neighborhood income figure by the number of households in the neighborhood.
+
+```{r}
+hood_inc <- hamco_bg2 |>
+  filter(
+    Municipality == "Cincinnati",
+    !is.na(Income)
+  ) |>
+  group_by(Neighborhood) |>
+  summarise(
+    Income = sum(Income),
+    IncomeHH = sum(Households)
+  )
+```
+
+```{r}
+#| echo = FALSE
+head(hood_inc)
+```
+
+This is essentially a weighted average of the median household income in the neighborhood's constituent block groups.
+
+Next, all of the other categories are calculated at the neighborhood level.
+
+```{r}
+#| message = FALSE
+cinci_hood <- filter(hamco_bg2, Municipality == "Cincinnati") |>
+  ungroup() |>
+  select(Age25:LimitedEnglish, Population:White, Municipality, Neighborhood) |>
+  group_by(Municipality, Neighborhood) |>
+  summarise(across(Age25:White, sum)) |>
+  left_join(hood_inc)
+```
+
+```{r}
+#| echo = FALSE
+head(cinci_hood)
+```
+
+One constituent element of the deprivation index -- the proportion of households that receive public assistance -- is not available at the block group level, so it must be estimated using tract-level data.
+
+```{r}
+#| message = FALSE
+hh_tract <- filter(hamco_bg2, Municipality == "Cincinnati") |>
+  mutate(Tract = str_trunc(GEOID, 11, "right", ellipsis = "")) |>
+  group_by(Tract, Neighborhood) |>
+  summarise(Households = sum(Households)) |>
+  group_by(Tract) |>
+  mutate(
+    TractHH = sum(Households),
+    Allocation = Households/TractHH
+  )
+
+hood_assistance <- get_acs(
+  geography = "tract",
+  variables = "B19058_002",
+  county = "Hamilton",
+  state = "OH"
+  ) |>
+  inner_join(
+    select(hh_tract, -Households), 
+    by = c("GEOID" = "Tract"),
+    multiple = "all"
+  ) |>
+  mutate(
+    Assistance = estimate*Allocation,
+    HH = TractHH*Allocation
+  ) |>
+  group_by(Neighborhood) |>
+  summarise(Assistance = sum(Assistance))
+
+cinci_hood <- inner_join(cinci_hood, hood_assistance) |>
+  mutate(
+    County = "Hamilton",
+    State = "Ohio",
+    across(Age25:Assistance, round)
+  ) 
+```
+
+```{r}
+#| echo = FALSE
+head(cinci_hood)
+```
+
+### County subdivisions
+
+Next, the same data are downloaded at the county subdivision level for our eight counties of interest. Generally, county subdivisions are local government units. However, two municipalities in our region (Loveland and Milford) cross county lines. These municipalities will have multiple county subdivisions in the data set that must be combined to obtain municipal-level data.
+
+```{r}
+#| message = FALSE
+oh_cs <- get_acs(
+  geography = "county subdivision",
+  variables = c(bg_var_list, "B19058_002"),
+  state = "OH",
+  county = c("Clermont", "Warren", "Butler", "Hamilton"),
+  year = 2021,
+  geometry = TRUE
+  )
+
+ky_cs <- get_acs(
+  geography = "county subdivision",
+  variables = c(bg_var_list, "B19058_002"),
+  state = "KY",
+  county = c("Boone", "Campbell", "Kenton"),
+  year = 2021,
+  geometry = TRUE
+  )
+
+in_cs <- get_acs(
+  geography = "county subdivision",
+  variables = c(bg_var_list, "B19058_002"),
+  state = "IN",
+  county = "Dearborn",
+  year = 2021,
+  geometry = TRUE
+  )
+
+oki_cs <- rbind(oh_cs, ky_cs) |>
+  rbind(in_cs) |>
+  inner_join(cat_frame) |>
+  separate_wider_delim(
+    NAME, 
+    delim = ", ", 
+    names = c("Municipality", "County", "State")
+  ) |>
+  mutate(
+    Municipality = str_remove(Municipality, " city"),
+    Municipality = str_remove(Municipality, " village"),
+    Municipality = str_remove(Municipality, " CCD"),
+    Municipality = str_remove(Municipality, "The Village of "),
+    Municipality = str_to_title(Municipality),
+    County = str_remove(County, " County"),
+    County = case_when(
+      Municipality == "Loveland" ~ "Hamilton",
+      Municipality == "Milford" ~ "Clermont",
+      TRUE ~ County
+    )
+  ) |>
+  filter(
+    !is.na(estimate),
+    estimate > 0
+  )
+
+oki_no_income <- filter(oki_cs, category != "MedianHHIncome") |>
+  as_tibble() |>
+  group_by(Municipality, County, State, category) |>
+  summarise(estimate = sum(estimate)) |>
+  pivot_wider(
+    id_cols = c(Municipality, State, County),
+    names_from = category,
+    values_from = estimate
+  ) |>
+  mutate(
+    across(c(Age25:LimitedEnglish, Population:White), \(x) coalesce(x, 0)),
+    Neighborhood = NA
+  )
+
+oki_income <- filter(oki_cs, category %in% c("MedianHHIncome", "Households")) |>
+  pivot_wider(
+    id_cols = c(GEOID, Municipality, County, State),
+    names_from = category,
+    values_from = estimate
+  ) |>
+  mutate(Income = MedianHHIncome*Households) |>
+  group_by(Municipality, County, State) |>
+  summarise(
+    Income = sum(Income),
+    IncomeHH = sum(Households)
+  ) |>
+  inner_join(oki_no_income)
+```
+
+```{r}
+#| echo = FALSE
+head(oki_no_income)
+```
+
+### Counties
+
+The same data points are then downloaded at the county level for the eight county region. These are then totaled to obtain data for the eight-county metro area.
+
+```{r}
+#| message = FALSE
+oh_county <- get_acs(
+  geography = "county",
+  variables = c(bg_var_list, "B19058_002"),
+  state = "OH",
+  county = c("Clermont", "Warren", "Butler", "Hamilton"),
+  year = 2021,
+  geometry = TRUE
+  )
+
+ky_county <- get_acs(
+  geography = "county",
+  variables = c(bg_var_list, "B19058_002"),
+  state = "KY",
+  county = c("Campbell", "Kenton", "Boone"),
+  year = 2021,
+  geometry = TRUE
+  )
+
+in_county <- get_acs(
+  geography = "county",
+  variables = c(bg_var_list, "B19058_002"),
+  state = "IN",
+  county = "Dearborn",
+  year = 2021,
+  geometry = TRUE
+  )
+
+oki_county <- rbind(oh_county, ky_county) |>
+  rbind(in_county) |>
+  inner_join(cat_frame) |>
+  separate_wider_delim(
+    cols = NAME, 
+    delim = ", ", 
+    names = c("County", "State")
+  ) |>
+  mutate(County = str_remove(County, " County"))
+
+oki_county2 <- oki_county |>
+  as_tibble() |>
+  group_by(County, State, category) |>
+  summarise(estimate = sum(estimate)) |>
+  pivot_wider(
+    id_cols = c(County, State), 
+    names_from = category, 
+    values_from = estimate
+  ) |>
+  mutate(
+    Income = MedianHHIncome*Households,
+    IncomeHH = Households,
+    Municipality = NA,
+    Neighborhood = NA
+  ) |>
+  select(-MedianHHIncome)
+
+metro <- oki_county2 |>
+  ungroup() |>
+  summarise(across(Age25:IncomeHH, sum)) |>
+  mutate(
+    County = "All",
+    State = "All",
+    Municipality = NA,
+    Neighborhood = NA
+  )
+```
+
+```{r}
+#| echo = FALSE
+metro
+```
+
+### Deprivation index
+
+Next, the deprivation index is estimated for each Cincinnati neighborhood. Because the deprivation index is calculated at the census tract level, the block group population data for Cincinnati must be rolled up to that level. The neighborhood's deprivation index is the average, weighted by population, of the deprivation indexes of its constituent census tracts.
+
+```{r}
+#| message = FALSE
+oh_tract <- get_acs(
+  geography = "tract",
+  variables = "B01001_001",
+  state = "OH",
+  county = c("Clermont", "Warren", "Butler", "Hamilton"),
+  year = 2021
+  )
+
+ky_tract <- get_acs(
+  geography = "tract",
+  variables = "B01001_001",
+  state = "KY",
+  county = c("Kenton", "Campbell", "Boone"),
+  year = 2021
+  )
+
+in_tract <- get_acs(
+  geography = "tract",
+  variables = "B01001_001",
+  state = "IN",
+  county = c("Dearborn"),
+  year = 2021
+  )
+
+hood_di <- filter(hamco_bg2, Municipality == "Cincinnati") |>
+  mutate(census_tract_fips = str_trunc(GEOID, 11, "right", ellipsis = "")) |>
+  group_by(census_tract_fips, Neighborhood, Municipality) |>
+  summarise(Population = sum(Population)) |>
+  group_by(Municipality, Neighborhood) |>
+  mutate(
+    HoodPop = sum(Population),
+    TractWeight = Population/HoodPop
+  ) |>
+  inner_join(di) |>
+  mutate(DIWeight = TractWeight*dep_index) |>
+  summarise(DeprivationIndex = sum(DIWeight)) |>
+  mutate(
+    County = "Hamilton",
+    State = "Ohio"
+  )
+```
+
+```{r}
+#| echo = FALSE
+head(hood_di)
+```
+
+Using the weighted average method, the deprivation index is then estimated for municipalities, counties, and the eight-county area as a whole.
+
+```{r}
+#| message = FALSE
+cs_di <- rbind(oh_tract, ky_tract) |>
+  rbind(in_tract) |>
+  full_join(select(oki, County:Allocation, GEOID), multiple = "all") |>
+  mutate(Population = estimate*Allocation) |>
+  inner_join(
+    select(di, census_tract_fips, dep_index), 
+    by = c("GEOID" = "census_tract_fips")
+  ) |>
+  mutate(
+    County = case_when(
+      Municipality == "Loveland" ~ "Hamilton",
+      Municipality == "Milford" ~ "Clermont",
+      TRUE ~ County
+    )
+  ) |>
+  group_by(Municipality, County, State) |>
+  mutate(
+    TownPop = sum(Population),
+    TractShare = Population/TownPop,
+    DIWeight = TractShare*dep_index
+  ) |>
+  summarise(DeprivationIndex = sum(DIWeight)) |>
+  mutate(Neighborhood = NA)
+```
+
+```{r}
+#| echo = FALSE
+head(cs_di)
+```
+
+```{r}
+#| message = FALSE
+county_di <- select(oki_income, Municipality, County, State, Population) |>
+  inner_join(cs_di) |>
+  mutate(DIWeight = DeprivationIndex*Population) |>
+  group_by(State, County) |>
+  summarise(
+    DIWeight = sum(DIWeight),
+    Population = sum(Population)
+  ) |>
+  mutate(
+    DeprivationIndex = DIWeight/Population,
+    DIWeight = DeprivationIndex*Population,
+    Municipality = NA,
+    Neighborhood = NA
+  ) |>
+  select(-DIWeight)
+```
+
+```{r}
+#| echo = FALSE
+head(county_di)
+```
+
+```{r}
+metro_di <- county_di |>
+  mutate(DIWeight = DeprivationIndex*Population) |>
+  ungroup() |>
+  summarise(
+    Population = sum(Population),
+    DIWeight = sum(DIWeight)
+  ) |>
+  mutate(
+    DeprivationIndex = DIWeight/Population,
+    State = "All",
+    County = "All",
+    Municipality = NA,
+    Neighborhood = NA
+  ) |>
+  select(DeprivationIndex:Neighborhood)
+```
+
+```{r, echo=FALSE}
+#| echo = FALSE
+metro_di
+```
+
+### Calculating rates
+
+The Deprivation Index figures are combined with the census data, and then rates are calculated.
+
+```{r}
+#| message=FALSE
+di_all <- rbind(hood_di, cs_di) |>
+  rbind(select(county_di, -Population)) |>
+  rbind(metro_di)
+
+census <- rbind(cinci_hood, oki_income) |>
+  rbind(oki_county2) |>
+  ungroup() |>
+  rbind(metro) |>
+  inner_join(di_all) |>
+  mutate(
+    AssistanceRate = Assistance/Households,
+    BlackRate = Black/Population,
+    ChildRate = Children/Population,
+    OtherLanguage = Age5-English,
+    OtherLanguageRate = OtherLanguage/Age5,
+    ChildHHRate = HHWithChildren/Households,
+    HighSchoolRate = HighSchool/Age25,
+    HispanicRate = Hispanic/Population,
+    LimitedEnglishRate = LimitedEnglish/Age5,
+    PovertyRate = Poverty/Families,
+    UninsuredRate = Uninsured/Population,
+    VacancyRate = Vacant/HousingUnits,
+    WhiteRate = White/Population,
+    MedianHHIncome = Income/IncomeHH
+  ) |>
+  select(
+    State, County, Municipality, Neighborhood,
+    Population, White, WhiteRate, Black, BlackRate, Hispanic, HispanicRate,
+    Children, ChildRate, Uninsured, UninsuredRate,
+    Households, HHWithChildren, ChildHHRate, Assistance, AssistanceRate, 
+    MedianHHIncome,
+    Age25, HighSchool, HighSchoolRate,
+    Families, Poverty, PovertyRate,
+    HousingUnits, Vacant, VacancyRate,
+    Age5, OtherLanguage, OtherLanguageRate, LimitedEnglish, LimitedEnglishRate
+  ) |>
+  full_join(di_all)
+```
+
+1.  Proportion of population that is Black
+
+2.  Proportion of population that is white
+
+3.  Proportion of population that is Hispanic/Latino
+
+4.  Proportion of population that is children under 18
+
+5.  Proportion of households that include a child under 18
+
+6.  Proportion of the population over age 5 that speaks a language other than English at home
+
+7.  Proportion of the population over age 5 with no or limited English-speaking ability
+
+8.  Proportion of the population that lacks health insurance
+
+9.  Proportion of the population over age 25 with a high school diploma or equivalent
+
+10. Proportion of households that receive public assistance
+
+11. The poverty rate
+
+12. The housing vacancy rate
+
+13. The median household income
+
+```{r}
+#| echo = FALSE
+head(census)
+```
+
+# CCHMC health data
+
+### Asthma
+
+The addresses associated with children on the asthma registry and with children admitted for asthma are available from the HPCEClarity database.
+
+```{r}
+con <- dbConnect(odbc::odbc(), "ClarityProd")
+
+asthma_reg <- dbGetQuery(con, "
+  SELECT DISTINCT p.pat_id
+                ,CAST(p.birth_date AS DATE) AS birth_date
+				        ,p.add_line_1
+				        ,p.add_line_2
+				        ,p.city
+				        ,p.state
+				        ,p.zip
+				        ,p.county
+  FROM hpceclarity.bmi.registry_config c
+    INNER JOIN hpceclarity.bmi.reg_data_hx_membership m
+      ON c.registry_id = m.registry_id
+    INNER JOIN hpceclarity.bmi.registry_data_info d
+      ON m.record_id = d.record_id
+    INNER JOIN hpceclarity.bmi.patient p
+      ON p.pat_id = d.networked_id
+  WHERE c.registry_name like '%asthma%'
+    AND p.add_line_1 not like '%222 E%'
+    AND m.status_c = 1
+                  ") |>
+  mutate(
+    Registry = 1,
+    Admission = 0,
+    Age = as.numeric(today()-birth_date)/385.25
+  ) |>
+  filter(Age < 18)
+
+asthma_admits <- dbGetQuery(con, "
+  SELECT pat_id
+        ,pat_addr_1 as add_line_1
+        ,pat_addr_2 as add_line_2
+        ,pat_city as city
+        ,pat_state as state
+        ,pat_zip as zip
+        ,countyfp
+    FROM temptable.dbo.health_equity_network_encounters
+    WHERE year(hosp_admsn_time) = 2022
+      AND asthma_admission = 1
+      AND add_line_1 not like '%222 E%'
+                            ") |>
+  mutate(
+    Admission = 1,
+    Registry = 0,
+    county = case_when(
+      state == "Ohio" ~ case_when(
+        countyfp == "061" ~ "Hamilton",
+        countyfp == "017" ~ "Butler",
+        countyfp == "025" ~ "Clermont",
+        countyfp == "165" ~ "Warren",
+        TRUE ~ NA
+      ),
+      state == "Kentucky" ~ case_when(
+        countyfp == "015" ~ "Boone",
+        countyfp == "037"~ "Campbell",
+        countyfp == "117" ~ "Kenton",
+        TRUE ~ NA
+      ),
+      state == "Indiana" ~ ifelse(countyfp == "029", "Dearborn", NA),
+      TRUE ~ NA
+    )
+  )
+```
+
+```{r}
+#| echo = FALSE
+head(asthma_reg)
+head(asthma_admits)
+```
+
+Once unique addresses in the eight-county area are identified for these patients, the addresses are geocoded using the DeGAUSS app.
+
+```{r}
+adds <- asthma_admits |>
+  filter(
+    !is.na(county) | 
+      (state %in% c("Ohio", "Indiana", "Kentucky") & is.na(countyfp))
+  ) |>
+  select(-countyfp) |>
+  rbind(
+    asthma_reg |>
+      select(-c(birth_date, Age)) |>
+      filter(
+        (state == "Ohio" & 
+           county %in% c("HAMILTON", "CLERMONT", "BUTLER", "WARREN")) |
+          (state == "Kentucky" & county %in% c("BOONE", "CAMPBELL", "KENTON")) |
+          (state == "Indiana" & county == "DEARBORN") |
+          (state %in% c("Ohio", "Indiana", "Kentucky") & is.na(county))
+      )
+  ) |>
+  mutate(
+    City = str_to_upper(city),
+    Zip = str_trunc(zip, 5, "right", ellipsis = ""),
+    Address = coalesce(add_line_1, add_line_2),
+    Address = str_to_upper(Address),
+  ) |>
+  separate_wider_delim(
+    Address, delim = "APT", names = "Address", too_many = "drop"
+  ) |>
+  separate_wider_delim(
+    Address, delim = "#", names = "Address", too_many = "drop"
+  ) |>
+  separate_wider_delim(
+    Address, delim = "UNIT", names = "Address", too_many = "drop"
+  )
+
+unique_adds <- adds |>
+  distinct(City, state, Zip, Address) |>
+  mutate(ID = row_number())
+
+for_geocoder <- unique_adds |>
+  mutate(
+    state = case_when(
+      state == "Ohio" ~ "OH",
+      state == "Kentucky" ~ "KY",
+      TRUE ~ "IN"
+    ),
+    address = paste(Address, City, state, Zip, sep = ", ")
+  ) |>
+  select(ID, address)
+#write_csv(for_geocoder, "for_degauss.csv")
+
+#docker run --rm -v ${PWD}:/tmp ghcr.io/degauss-org/geocoder:3.0.2 for_degauss.csv
+```
+
+```{r}
+#| echo = FALSE
+head(for_geocoder)
+```
+
+DeGAUSS determines latitude and longitude coordinates for the address. Addresses are considered a match if they are geocoded with precision at the level of a range of street numbers.
+
+```{r}
+geocoded <- read.csv("for_degauss_geocoded_v3.0.2.csv") |>
+  filter(
+    precision == "range", 
+    geocode_result != "imprecise_geocode"
+    ) |>
+  st_as_sf(coords = c("lon", "lat"), crs = 'NAD83', remove = FALSE)
+```
+
+```{r}
+#| echo = FALSE
+head(geocoded)
+```
+
+To place the latitude and longitude coordinates in a jurisdiction, shapefiles of the county subdivision are obtained using the tigris package in R. Joining the geocoded addresses to the shapefiles using the sf package will, in most cases, place the address in the appropriate jurisdiction.
+
+```{r}
+#| message = FALSE, output = FALSE
+oki_munis <- oki_cs |>
+  distinct(Municipality, County, State, geometry) |>
+  st_as_sf() |>
+  st_join(geocoded) |>
+  group_by(ID) |>
+  mutate(count = n())
+```
+
+```{r}
+#| echo = FALSE
+head(oki_munis)
+```
+
+If the address is placed in one and only one municipality, and that municipality is not Cincinnati, then the geocoding process for that address is complete.
+
+```{r}
+#| message = FALSE
+muni_singles <- filter(oki_munis, count == 1)
+
+cinci1 <- filter(muni_singles, Municipality == "Cincinnati") |>
+  as_tibble() |>
+  select(ID) |>
+  inner_join(geocoded) |>
+  select(ID, geometry) |>
+  st_as_sf()
+
+hooded1 <- filter(muni_singles, Municipality != "Cincinnati") |>
+  as_tibble() |>
+  select(ID, State, County, Municipality) |>
+  mutate(Neighborhood = NA)
+```
+
+```{r}
+#| echo = FALSE
+head(hooded1)
+```
+
+For addresses located in Cincinnati, first the address is matched to a census block group, and then the block group to a neighborhood.
+
+```{r}
+#| message = FALSE, output = FALSE
+cinci_bg <- st_join(cinci1, distinct(hamco_bg, GEOID, geometry)) |>
+  inner_join(filter(allocations, Municipality == "Cincinnati")) |>
+  distinct(ID, Municipality, Neighborhood) |>
+  group_by(ID) |>
+  mutate(count = n()) |>
+  arrange(-count, ID)
+
+hooded2 <- filter(cinci_bg, count == 1) |>
+  select(-count) |>
+  mutate(
+    County = "Hamilton",
+    State = "Ohio"
+  )
+```
+
+Finally, geocoded addresses are matched back to individual patients, and the number of patients and admissions tallied for each neighborhood and county subdivision.
+
+```{r}
+#| message=FALSE
+asthma <- rbind(hooded1, hooded2) |>
+  inner_join(unique_adds) |>
+  inner_join(adds, multiple = "all") |>
+  group_by(State, County, Municipality, Neighborhood) |>
+  summarise(
+    AsthmaRegistry = sum(Registry),
+    AsthmaAdmissions = sum(Admission)
+  )
+```
+
+```{r}
+#| echo = FALSE
+head(asthma)
+```
+
+Admissions and patients then are totaled for Cincinnati, and at the county and metropolitan levels.
+
+```{r}
+#| message = FALSE
+asthma_cs <- asthma |>
+  group_by(State, County, Municipality) |>
+  summarise(across(AsthmaRegistry:AsthmaAdmissions, sum)) |>
+  mutate(Neighborhood = "All")
+
+asthma_county <- asthma |>
+  group_by(State, County) |>
+  summarise(across(AsthmaRegistry:AsthmaAdmissions, sum)) |>
+  mutate(
+    Municipality = "All",
+    Neighborhood = "All"
+  )
+
+asthma_total <- asthma |>
+  summarise(across(AsthmaRegistry:AsthmaAdmissions, sum)) |>
+  mutate(
+    County = "All",
+    State = "All",
+    Neighborhood = "All",
+    Municipality = "All"
+  )
+```
+
+```{r}
+#| echo = FALSE
+head(asthma_total)
+```
+
+These totals are combined with the Census and Deprivation Index data compiled earlier. This allows rates of asthma prevalence and admissions to be calculated.
+
+```{r}
+#| message = FALSE
+all_data <- filter(asthma, Neighborhood != "All") |>
+  rbind(asthma_cs) |>
+  rbind(asthma_county) |>
+  rbind(asthma_total) |>
+  right_join(census) |>
+  mutate(
+    across(AsthmaRegistry:AsthmaAdmissions, \(x) coalesce(x, 0)),
+    AsthmaRegistryRate = AsthmaRegistry/Children,
+    AsthmaRegistryRate = ifelse(
+      is.infinite(AsthmaRegistryRate), 
+      NA, 
+      AsthmaRegistryRate
+    ),
+    AsthmaAdmissionRate = AsthmaAdmissions/Children,
+    AsthmaAdmissionRate = ifelse(
+      is.nan(AsthmaAdmissionRate), 
+      NA, 
+      AsthmaAdmissionRate
+    ),
+    AsthmaRegistryRate = coalesce(AsthmaRegistryRate, 0),
+    AsthmaAdmissionRate = coalesce(AsthmaAdmissionRate, 0),
+    Tier = case_when(#<1>
+      DeprivationIndex >= .6 ~ "Highest",
+      DeprivationIndex >= .475 ~ "Higher",
+      DeprivationIndex >= .35 ~ "Medium",
+      DeprivationIndex >= .225 ~ "Lower",
+      TRUE ~ "Lowest"
+    ),
+    Tier = factor(
+      Tier, 
+      levels = c("Lowest", "Lower", "Medium", "Higher", "Highest")
+    ),
+    Level = case_when(#<2>
+      Neighborhood != "All" ~ "Neighborhood",
+      Municipality != "All" ~ "Municipality",
+      County != "All" ~ "County",
+      TRUE ~ "All"
+    ),
+    Label = case_when(#<3>
+      Neighborhood != "All" ~ Neighborhood,
+      Municipality != "All" ~ Municipality,
+      TRUE ~ County
+    )
+  )
+```
+
+1.  The Tier variable determines the color of the area on the map based on the area's Deprivation Index.
+2.  The Level variable is used to determine benchmarks that individual areas will be measured against.
+3.  The Label variable will be the name used to designate the area on the map.
+
+```{r}
+#echo = FALSE
+head(all_data)
+```
+
+### Pharmacies
+
+Next, the locations of pharmacies in the CCHMC electronic health record are downloaded and extracted. These will be added to the school addresses for geocoding.
+
+```{r}
+#| warning = FALSE
+pharms <- dbGetQuery(con, "
+  SELECT pharmacy_id
+        ,pharmacy_name
+        ,record_state_name
+    FROM hpceclarity.bmi.rx_phr
+    WHERE record_state_name is null or record_state_name = 'Active'
+                     ") 
+
+to_geocode <- pharms |>
+  separate_wider_delim(
+    pharmacy_name, 
+    delim = "-", 
+    names = c("Name", "name2", "name3"), 
+    too_many = "merge",
+    too_few = "align_start"
+  ) |>
+  separate_wider_delim(
+    name3, 
+    delim = "--", 
+    names = c("name3", "name4", "name5"), 
+    too_few = "align_start",
+    too_many = "merge"
+  ) |>
+  mutate(
+    name2 = ifelse(name2 == "", name3, name2),
+    comma = str_detect(name2, ","),
+    city = str_trim(ifelse(comma, name2, name3))
+  ) |>
+  separate_wider_delim(
+    city,
+    delim = "-",
+    names = c("city", "city2", "city3", "city4", "city5"),
+    too_few = "align_start"
+  ) |>
+  mutate(
+    comma = str_detect(city, ","),
+    city = str_trim(ifelse(comma, city, city2)),
+    comma = str_detect(city, ","),
+    city = case_when(
+      comma ~ city,
+      str_detect(city3, ",") ~ city3,
+      str_detect(city4, ",") ~ city4,
+      str_detect(city5, ",") ~ city5,
+      TRUE ~ city
+    )
+  ) |>
+  filter(str_detect(city, ",")) |>
+  separate_wider_delim(
+    city,
+    delim = ",",
+    names = c("City", "State"),
+    too_many = "drop"
+  ) |>
+  mutate(State = str_trim(State)) |>
+  filter(State %in% c("OH", "IN", "KY")) |>
+  separate_wider_delim(
+    name3,
+    delim = " AT ",
+    names = c("Address", "Address2"),
+    too_few = "align_start",
+    too_many = "merge"
+  ) |>
+  mutate(
+    Address = str_trim(Address),
+    num = parse_number(Address),
+    num = as.character(num),
+    added = str_starts(Address, num),
+    Address = ifelse(added, Address, str_trim(name4)),
+    num = as.character(parse_number(Address)),
+    added = str_starts(Address, num),
+    Address = ifelse(is.na(added), str_trim(city2), Address),
+    num = as.character(parse_number(Address)),
+    added = str_starts(Address, num),
+    Address = ifelse(added, Address, str_trim(city3)),
+    num = as.character(parse_number(Address)),
+    added = str_starts(Address, num),
+    Type = "Pharmacy",
+    Zip = NA
+  ) |>
+  filter(added, !is.na(added)) |>
+  select(Name, Address, City, State, Type, Zip) |>
+  rbind(schools2)
+```
+
+```{r}
+#| echo = FALSE
+head(to_geocode)
+```
+
+The addresses are geocoded using the tidygeocoder package to link to a Census Bureau API.
+
+```{r}
+#| message = FALSE
+geocoded_points <- geocode(
+  to_geocode,
+  street = Address,
   city = City,
   state = State,
   postalcode = Zip,
   method = "census"
+  ) 
+```
+
+```{r}
+#| echo = FALSE
+head(geocoded_points)
+```
+
+Because the CCHMC pharmacy address records lack Zip codes, the Census geocoder is unable to locate many of them. Those that are missed will be attempted a second time using the Geoapify platform API. This method finds more addresses than the Census API, but is also much slower.
+
+```{r}
+#| message = FALSE
+undone <- filter(geocoded_points, is.na(lat)) |>
+  geocode(
+    street = Address,
+    city = City,
+    state = State,
+    postalcode = Zip,
+    method = "geoapify"
+  )
+```
+
+The latitude and longitude coordinates determined by the geocoders are then added to those for the school buildings, then matched with the county subdivision boundaries to determine which pharmacies are in Cincinnati and which are in the eight-county area.
+
+```{r}
+#| message = FALSE
+points_all <- undone |>
+  rename(
+    lat = lat...9,
+    long = long...10
+    ) |>
+  select(Name, Type, lat, long, Address) |>
+  rbind(select(geocoded_points, Name, lat, long, Type, Address)) |>
+  filter(!is.na(lat))
+  
+points_all2 <- points_all |>
+  st_as_sf(
+    coords = c("long", "lat"),
+    crs = "NAD83"
+  ) |>
+  inner_join(points_all, multiple = "all") |>
+  unique()
+
+points <- oki_cs |>
+  st_as_sf() |>
+  distinct(Municipality, County, State, geometry) |>
+  st_join(points_all2, left = FALSE)
+
+cinci_points <- filter(
+  points, 
+  Municipality %in% c("Cincinnati", "Norwood") | Type == "School"
+  )
+```
+
+```{r}
+#| echo = FALSE
+head(points)
+```
+
+# Determining benchmarks
+
+The map is intended to show the ways in which neighborhoods and municipalities differ from each other and from the area as a whole. This requires calculating the minimum, maximum, and mean values for each of the statistical elements. Because there will be three maps, three sets of benchmarks are needed. The municipal and county maps will have the same means, which in both cases are the averages for the entire eight-county area.
+
+```{r}
+#| message = FALSE
+benchmarks <- all_data |>
+  ungroup() |>
+  select(
+    County:Neighborhood, 
+    ends_with("Rate"), 
+    Level, 
+    MedianHHIncome, 
+    DeprivationIndex
   )
 
+bench_min <- benchmarks |>
+  filter(Level != "All") |>
+  group_by(Level) |>
+  summarise(across(WhiteRate:DeprivationIndex, \(x) min(x, na.rm = TRUE))) |>
+  pivot_longer(
+    cols = WhiteRate:DeprivationIndex,
+    names_to = "variable",
+    values_to = "Minimum"
+  )
+
+bench_max <- benchmarks |>
+  filter(Level != "All") |>
+  group_by(Level) |>
+  summarise(across(WhiteRate:DeprivationIndex, \(x) max(x, na.rm = TRUE))) |>
+  pivot_longer(
+    cols = WhiteRate:DeprivationIndex,
+    names_to = "variable",
+    values_to = "Maximum"
+  )
+
+bench_mean <- benchmarks |>
+  ungroup() |>
+  filter(
+    County == "All" | (Municipality == "Cincinnati" & is.na(Neighborhood))
+  ) |>
+  mutate(Level = ifelse(Level == "Municipality", "Neighborhood", "County")) |>
+  select(WhiteRate:DeprivationIndex) |>
+  pivot_longer(
+    cols = c(WhiteRate:AsthmaAdmissionRate, MedianHHIncome, DeprivationIndex),
+    names_to = "variable",
+    values_to = "Mean"
+  )
+
+benchmarks_all <- filter(bench_mean, Level == "County") |>
+  mutate(Level = "Municipality") |>
+  rbind(bench_mean) |>
+  inner_join(bench_max) |>
+  inner_join(bench_min)
+```
+
+```{r}
+#| echo = FALSE
+head(benchmarks_all)
+```
+
+The metrics for individual areas can then be compared to these benchmarks.
+
+```{r}
+#| message = FALSE
+rates <- filter(all_data, County != "All") |>
+  select(
+    Level,
+    County,
+    Municipality,
+    Neighborhood, 
+    ends_with("Rate"), 
+    MedianHHIncome, 
+    DeprivationIndex
+  ) |>
+  pivot_longer(
+    cols = WhiteRate:DeprivationIndex,
+    names_to = "variable"
+  ) |>
+  inner_join(benchmarks_all) |>
+  mutate(
+    Shade = ifelse(
+      value > Mean, 
+      (value-Mean)/(Maximum-Mean), 
+      (value-Mean)/(Mean-Minimum)
+    ),
+    Shade = ifelse(is.infinite(Shade), NA, Shade),
+    Scale = ifelse(
+      variable %in% c(
+        "WhiteRate", 
+        "BlackRate", 
+        "HispanicRate", 
+        "ChildRate", 
+        "ChildHHRate",
+        "OtherLanguageRate",
+        "LimitedEnglishRate",
+        "AsthmaRegistryRate",
+        "AsthmaAdmissionRate"
+      ), 
+      value,
+      (value-Minimum)/(Maximum-Minimum)
+    ),
+    Textloc = ifelse(Scale > .9, Scale - .025, Scale + .04)
+  )
+```
+
+1.  The Shade variable determines the ratio of the metric's difference from the mean to the range of the metric. It is used to determine the color of the bars on the graphics on the map.
+2.  Scale is either the raw value of the metric or the ratio of the metric to the range of the metric. It will determine the height of the bars.
+
+```{r}
+#| echo = FALSE
+head(rates)
+```
+
+Norwood, St. Bernard, and Elmwood Place are suburbs that are surrounded by Cincinnati and will appear on both the Cincinnati neighborhood and municipality maps. Their metrics, therefore, need to be compared to both sets of benchmarks.
+
+```{r}
+#| message = FALSE
+inner_subs <- filter(
+  rates, 
+  Municipality %in% c("Norwood", "St. Bernard", "Elmwood Place")
+  ) |>
+  select(County:value) |>
+  mutate(
+    Level = "Neighborhood",
+    Neighborhood = Municipality
+  ) |>
+  inner_join(benchmarks_all) |>
+  mutate(
+    Shade = ifelse(
+      value > Mean, 
+      (value-Mean)/(Maximum-Mean), 
+      (value-Mean)/(Mean-Minimum)
+    ),
+    Scale = ifelse(
+      variable %in% c(
+        "WhiteRate", 
+        "BlackRate", 
+        "HispanicRate", 
+        "ChildRate", 
+        "ChildHHRate",
+        "OtherLanguageRate",
+        "LimitedEnglishRate",
+        "AsthmaRegistryRate",
+        "AsthmaAdmissionRate"
+      ),
+      value,
+      (value-Minimum)/(Maximum-Minimum)
+    ),
+    Textloc = ifelse(Scale > .9, Scale - .025, Scale + .04)
+  )
+
+rates <- rbind(rates, inner_subs) |>
+  mutate(variable = str_remove(variable, "Rate"))
+```
+
+### Creating charts
+
+In order to create the necessary charts for the map, a list of areas is required. That list will be broken into three, with one list for each map. A function will then iterate over those lists and create the chart for each area.
+
+```{r}
+#| message = FALSE
+areas <- distinct(rates, Level, County, Municipality, Neighborhood) |>
+  mutate(
+    Label = case_when(
+      !is.na(Neighborhood) ~ Neighborhood,
+      !is.na(Municipality) ~ Municipality,
+      TRUE ~ County
+    )
+  ) |>
+  inner_join(select(all_data, County, Label, Tier)) |>
+  mutate(
+    Label = ifelse(
+      is.na(Neighborhood) & is.na(Municipality),
+      paste(Label, "County", sep = " "),
+      Label
+    )
+  ) |>
+  arrange(Level, Label) |>
+  ungroup() |>
+  mutate(geoid = row_number())
+
+hoods <- areas$geoid[areas$Level == "Neighborhood"]
+munis <- areas$geoid[areas$Level == "Municipality"]
+counties <- areas$geoid[areas$Level == "County"]
+```
+
+```{r}
+#| echo = FALSE
+head(areas)
+```
+
+One function creates the charts for demographic variables.
+
+```{r}
+demo_graph <- function(i) {
+  x <- filter(
+    rates,
+    variable %in% c(
+      "White", 
+      "Black", 
+      "Hispanic", 
+      "Child", 
+      "ChildHH",
+      "OtherLanguage",
+      "LimitedEnglish"
+    )
+  ) |>
+    inner_join(areas[i,]) |>
+    mutate(
+      variable = factor(
+        variable, 
+        levels = c(
+          "White", 
+          "Black", 
+          "Hispanic", 
+          "Child", 
+          "ChildHH", 
+          "OtherLanguage", 
+          "LimitedEnglish"
+        )
+      )
+    )
+  
+  y <- ggplot(x, aes(x = variable, y = Scale, fill = Shade)) +
+    geom_bar(stat = "identity", color = "black") +
+    labs(x = NULL, y = "%", title = unique(x$Label)) +
+    scale_y_continuous(
+      limits = c(0, 1),
+      breaks = seq(0, 1, .2),
+      labels = seq(0, 100, 20)
+    ) +
+    scale_x_discrete(
+      labels = c(
+        "White",
+        "Black",
+        "Hispanic",
+        "Children",
+        "Households\nwith Children",
+        "Language other\nthan English",
+        "Limited\nEnglish"
+      )
+    ) +
+    theme_minimal() +
+    guides(fill = "none") +
+    theme(plot.title = element_text(hjust = .5)) + 
+    geom_text(
+      aes(label = paste0(round(value*100, 1), "%"), y = Textloc), 
+      size = 4
+    ) +
+    scale_fill_gradient2(
+      limits = c(-1, 1), 
+      high = "#83286B", 
+      low = "#76BC44", 
+      mid = "#9BD3DD"
+    )
+  y
+  return(y)
+} 
+```
+
+This function is then iterated over the lists of neighborhoods, municipalities, and counties, and the charts are stored in three separate lists.
+
+```{r}
+#| message = FALSE
+hood_demo_popups <- lapply(hoods, function(k) {
+  demo_graph(i = k)
+  })
+
+muni_demo_popups <- lapply(munis, function(k){
+  demo_graph(i = k)
+  })
+
+county_demo_popups <- lapply(counties, function(k){
+  demo_graph(i = k)
+  })
+```
+
+```{r}
+#| echo = FALSE, message = FALSE
+demo_graph(32)
+
+```
+
+A second function creates the charts for the Deprivation Index and its component metrics. That function is iterated over the same three lists.
+
+```{r}
+#| message = FALSE
+di_graph <- function(i) {
+  x <- filter(
+    rates,
+    variable %in% c(
+      "Uninsured", 
+      "Assistance", 
+      "HighSchool", 
+      "Poverty", 
+      "Vacancy", 
+      "MedianHHIncome",
+      "DeprivationIndex"
+    )
+  ) |>
+    inner_join(areas[i,]) |>
+    mutate(
+      variable = factor(
+        variable,
+        levels = c(
+          "DeprivationIndex",
+          "Poverty",
+          "Assistance",
+          "MedianHHIncome",
+          "Uninsured",
+          "HighSchool",
+          "Vacancy"
+        )
+      ),
+      label = case_when(
+        variable == "DeprivationIndex" ~ as.character(round(value, 3)),
+        variable == "MedianHHIncome" ~ 
+          paste0("$", format(round(value), big.mark = ",", trim = TRUE)),
+        TRUE ~ paste0(as.character(round(value*100, 1)), "%")
+      ),
+      Shade = ifelse(
+        variable %in% c("MedianHHIncome", "HighSchool"), 
+        Shade * -1, 
+        Shade
+      )
+    )
+  
+  y <- ggplot(x, aes(x = variable, y = Scale, fill = Shade)) +
+    geom_bar(stat = "identity") +
+    scale_fill_gradient2(
+      limits = c(-1, 1), 
+      high = "#83286B", 
+      low = "#76BC44", 
+      mid = "#9BD3DD"
+    ) +
+    labs(x = NULL, y = NULL, title = unique(x$Label), fill = NULL) +
+    scale_y_continuous(labels = NULL, limits = c(0, 1)) +
+    scale_x_discrete(
+      labels = c(
+        "Deprivation\nIndex",
+        "Poverty\nRate",
+        "On Public\nAssistance",
+        "Median\nHousehold\nIncome",
+        "No Health\nInsurance",
+        "High School\nGraduation",
+        "Housing\nVacancies"
+      )
+    ) + 
+    guides(fill = "none") + 
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = .5)) +
+    geom_text(aes(label = label, y = Textloc), size = 4)
+  y
+  return(y)
+}
+
+hood_di_popups <- lapply(hoods, function(k) {
+  di_graph(i = k)
+})
+
+muni_di_popups <- lapply(munis, function(k){
+  di_graph(i = k)
+})
+
+county_di_popups <- lapply(counties, function(k){
+  di_graph(i = k)
+})
+
+```
+
+```{r}
+#| echo = FALSE, message = FALSE
+di_graph(64)
+```
+
+The final function generates the charts for asthma metrics.
+
+```{r}
+#| message = FALSE
+health_graph <- function(i) {
+  x <- rates |>
+    filter(
+      variable %in% c("AsthmaRegistry", "AsthmaAdmission")) |>
+    inner_join(areas[i,]) |>
+    inner_join(
+      select(
+        all_data, 
+        County, 
+        Municipality, 
+        AsthmaRegistry, 
+        AsthmaAdmissions, 
+        Children, 
+        Label
+      )
+    ) |>
+    mutate(
+      variable = factor(
+        variable, 
+        levels = c("AsthmaRegistry", "AsthmaAdmission")
+      ),
+      Scale = ifelse(Scale > .6, .6, Scale),
+      Textloc = ifelse(Textloc > .6, Textloc-.6, Textloc)
+    )
+  
+  y <- ggplot(x, aes(x = variable, y = Scale, fill = Shade)) +
+    geom_bar(stat = "identity") +
+    labs(x = NULL, y = "Per 100 children", title = unique(x$Label), fill = NULL) +
+    scale_y_continuous(
+      limits = c(0, .63), 
+      breaks = seq(0, .6, .1), 
+      labels = seq(0, 60, 10)
+    ) +
+    scale_x_discrete(labels = c("Asthma\n Registry", "Asthma\nAdmissions")) +
+    scale_fill_gradient2(
+      limits = c(-1, 1), 
+      high = "#83286B", 
+      low = "#76BC44", 
+      mid = "#9BD3DD"
+    ) +
+    guides(fill = "none") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = .5)) +
+    geom_text(aes(label = round(value*100, 1), y = Textloc), size = 4) +
+    annotate(
+      "text", 
+      x = 1, 
+      y = x$Textloc[x$variable == "AsthmaRegistry"] + .03,
+      label = paste0("n = ", mean(x$AsthmaRegistry))
+    ) +
+    annotate(
+      "text", 
+      x = 2, 
+      y = x$Textloc[x$variable == "AsthmaAdmission"] + .03,
+      label = paste0("n = ", mean(x$AsthmaAdmissions))
+    ) +
+    annotate(
+      "text",
+      x = 1.5,
+      y = .6,
+      label = paste0("Children = ", format(mean(x$Children), big.mark = ","))
+    )
+  y
+  return(y)
+}
+
+hood_health_popups <- lapply(hoods, function(k){
+  health_graph(i = k)
+})
+
+muni_health_popups <- lapply(munis, function(k){
+  health_graph(i = k)
+})
+
+county_health_popups <- lapply(counties, function(k){
+  health_graph(i = k)
+})
+```
+
+```{r}
+#| echo = FALSE, message = FALSE
+health_graph(128)
+```
+
+### Neighborhood boundaries
+
+To determine the boundaries of Cincinnati neighborhoods, Census block group lines are obtained using the Tigris package. Block groups in the same neighborhood are combined using the sf package.
+
+```{r}
+#| message = FALSE
+hood_lines <- hamco_bg |>
+  inner_join(allocations, multiple = "all") |>
+  filter(
+    Municipality %in% c("Cincinnati", "Norwood", "St. Bernard", "Elmwood Place")
+  ) |>
+  group_by(Neighborhood) |>
+  summarise(geometry = st_union(geometry)) |>
+  #rename(Area = Neighborhood) |>
+  mutate(
+    State = "Ohio",
+    County = "Hamilton",
+    Centroid = st_centroid(geometry),
+    Level = "Neighborhood"
+  ) |>
+  inner_join(areas) |>
+  arrange(geoid)
+```
+
+```{r}
+#| echo = FALSE
+head(hood_lines)
 ```
 
 The map itself is created using the Leaflet package. Clicking the marker at the center of each region will reveal the charts associated with that region.
@@ -1604,7 +1796,27 @@ The map itself is created using the Leaflet package. Clicking the marker at the 
 pal <- colorFactor(
   c("#76BC44", "#A1CA3C", "#9BD3DD", "#CA5699", "#83286B"), 
   domain = all_data$Tier
-  )
+)
+
+cinci_icons <- icons(
+  iconUrl = ifelse(
+    cinci_points$Type == "School", 
+    "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png",
+    "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-yellow.png"
+    ),
+  iconWidth = 20,
+  iconHeight = 30
+)
+
+muni_icons <- icons(
+  iconUrl = ifelse(
+    points$Type == "School", 
+    "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png",
+    "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-yellow.png"
+  ),
+  iconWidth = 20,
+  iconHeight = 30
+)
 
 citymap <- leaflet() |>
   addTiles() |>
@@ -1616,7 +1828,7 @@ citymap <- leaflet() |>
     opacity = 1,
     fillOpacity = .7,
     fillColor = ~pal(Tier)
-    ) |>
+  ) |>
   addLegendFactor(
     pal = pal,
     values = hood_lines$Tier,
@@ -1628,11 +1840,11 @@ citymap <- leaflet() |>
       "Demographics", 
       "Deprivation indicators",
       "Health indicators",
-      "Schools"
-      ),
+      "Schools and Pharmacies"
+    ),
     position = "bottomright",
     options = layersControlOptions(collapsed = FALSE)
-    ) |>
+  ) |>
   addCircleMarkers(
     data = hood_lines$Centroid,
     color = "#E64479",
@@ -1661,78 +1873,42 @@ citymap <- leaflet() |>
     group = "Health indicators"
   ) |>
   addMarkers(
-    data = geocoded,
+    data = cinci_points,
     ~long,
     ~lat,
+    icon = cinci_icons,
     popup = ~Name,
-    group = "Schools"
-  )
+    group = "Schools and Pharmacies"
+  ) 
 
 #saveWidget(citymap, "city map.html")
 ```
 
-For municipalities, boundaries are obtained using the Tigris package. For municipalities that cross county lines (Loveland, Milford, and Fairfield), the segments in different counties must be combined using the sf package.
+```{r}
+#| echo = FALSE
+citymap
+```
+
+For municipalities that cross county lines (Loveland, Milford, and Fairfield), the segments in different counties must be combined using the sf package.
 
 ```{r}
 #| message = FALSE
-oh_lines <- county_subdivisions(
-  state = "OH",
-  county = c("Hamilton", "Warren", "Clermont", "Butler")
-  ) |>
-  mutate(
-    County = case_when(
-      NAME == "Loveland" ~ "Hamilton",
-      NAMELSAD == "Fairfield city" ~ "Butler",
-      NAMELSAD == "Milford city" ~ "Clermont",
-      COUNTYFP == "061"  ~ "Hamilton",
-      COUNTYFP == "017" ~ "Butler",
-      COUNTYFP == "025" ~ "Clermont",
-      TRUE ~ "Warren"
-    )
-  ) |>
-  group_by(County, COUSUBFP, NAMELSAD) |>
+muni_lines <- oki_cs |>
+  distinct(Municipality, County, State, geometry)|>
+  st_as_sf() |>
+  group_by(Municipality, County, State) |>
   summarise(geometry = st_union(geometry)) |>
-  ungroup() |>
-  mutate(
-    Municipality = str_remove(NAMELSAD, " city"),
-    Municipality = str_remove(Municipality, " village"),
-    Municipality = str_remove(Municipality, "The Village of "),
-    Municipality = str_to_title(Municipality)
-  ) |>
-  select(County, Municipality, geometry)
-
-ky_lines <- county_subdivisions(
-  state = "KY",
-  county = c("Kenton", "Campbell", "Boone") 
-) |>
-  rename(Municipality = NAME) |>
-  mutate(
-    County = case_when(
-      COUNTYFP == "037" ~ "Campbell",
-      COUNTYFP == "117" ~ "Kenton",
-      TRUE ~ "Boone"
-    )
-  ) |>
-  select(County, Municipality, geometry)
-
-in_lines <- county_subdivisions(
-  state = "IN",
-  county = "Dearborn"
-) |>
-  mutate(
-    County = "Dearborn",
-    Municipality = str_to_title(NAMELSAD)
-  ) |>
-  select(County, Municipality, geometry)
-
-muni_lines <- rbind(oh_lines, ky_lines) |>
-  rbind(in_lines) |>
   mutate(
     Centroid = st_centroid(geometry),
     Neighborhood = "All"
   ) |>
-  inner_join(areas) |>
-  arrange(geoid)
+  inner_join(areas |> mutate(Neighborhood = coalesce(Neighborhood, "All"))) |>
+  arrange(geoid) 
+```
+
+```{r}
+#| echo = FALSE
+head(muni_lines)
 ```
 
 The municipalities map is then created using the Leaflet package.
@@ -1760,7 +1936,8 @@ muni_map <- leaflet() |>
     baseGroups = c(
       "Demographics", 
       "Deprivation indicators",
-      "Health indicators"
+      "Health indicators",
+      "Schools and Pharmacies"
     ),
     position = "bottomright",
     options = layersControlOptions(collapsed = FALSE)
@@ -1791,7 +1968,102 @@ muni_map <- leaflet() |>
     radius = 4,
     popup = popupGraph(muni_health_popups, height = 300, width = 700),
     group = "Health indicators"
+  ) |>
+  addMarkers(
+    data = points,
+    ~long,
+    ~lat,
+    icon = muni_icons,
+    popup = ~Name,
+    group = "Schools and Pharmacies"
   ) 
 
 #saveWidget(muni_map, "muni map.html")
+```
+
+```{r}
+#| echo = FALSE
+muni_map
+```
+
+Finally, the county map is created using the leaflet package.
+
+```{r}
+#| warning = FALSE, message = FALSE
+county_lines <- oki_county |>
+  distinct(County, State, geometry) |>
+  st_as_sf() |>
+  mutate(Centroid = st_centroid(geometry)) |> 
+  inner_join(filter(areas, Level == "County")) |>
+  arrange(geoid)
+
+county_map <- leaflet() |>
+  addTiles() |>
+  addPolygons(
+    data = county_lines,
+    stroke = TRUE,
+    weight = 1,
+    smoothFactor = .5,
+    opacity = 1,
+    fillOpacity = .7,
+    fillColor = ~pal(Tier)
+  ) |>
+  addLegendFactor(
+    pal = pal,
+    values = county_lines$Tier,
+    title = "Deprivation Index",
+    position = "bottomleft"
+  ) |>
+  addLayersControl(
+    baseGroups = c(
+      "Demographics", 
+      "Deprivation indicators",
+      "Health indicators",
+      "Schools and Pharmacies"
+    ),
+    position = "bottomright",
+    options = layersControlOptions(collapsed = FALSE)
+  ) |>
+  addCircleMarkers(
+    data = county_lines$Centroid,
+    color = "#E64479",
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
+    popup = popupGraph(county_demo_popups, height = 300, width = 700),
+    group = "Demographics"
+  ) |>
+  addCircleMarkers(
+    data = county_lines$Centroid,
+    color = "#E64479",
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
+    popup = popupGraph(county_di_popups, height = 300, width = 700),
+    group = "Deprivation indicators"
+  ) |>
+  addCircleMarkers(
+    data = county_lines$Centroid,
+    color = "#E64479",
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
+    popup = popupGraph(county_health_popups, height = 300, width = 700),
+    group = "Health indicators"
+  ) |>
+  addMarkers(
+    data = points,
+    ~long,
+    ~lat,
+    icon = muni_icons,
+    popup = ~Name,
+    group = "Schools and Pharmacies"
+  ) 
+
+#saveWidget(county_map, "county map.html")
+```
+
+```{r}
+#| echo = FALSE
+county_map
 ```
