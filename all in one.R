@@ -205,7 +205,8 @@ bg_var_list <-c(
   paste0("B02001_00", 2:9),
   "B02001_010",
   "B03002_012",
-  paste0("B07201_00", 1:2),
+  paste0("B07201_00", c(1, 2, 4)),
+  "B07201_014",
   paste0("B11012_00", 1:9),
   paste0("B11012_0", 10:17),
   "B15003_001",
@@ -222,7 +223,7 @@ bg_var_list <-c(
 bg_vars <- load_variables("acs5", year = 2021) |>
   filter(name %in% bg_var_list)
 
-cinci_bg <- get_acs(
+hamco_bg <- get_acs(
   geography = "block group",
   variables = bg_var_list,
   county = "Hamilton",
@@ -231,17 +232,15 @@ cinci_bg <- get_acs(
   ) |>
   inner_join(bg_vars, by = c("variable" = "name")) |>
   inner_join(allocations, multiple = "all") |>
-  filter(Municipality == "Cincinnati") |>
   mutate(estimate = estimate*Allocation) 
 
+cinci_bg <- filter(hamco_bg, Municipality == "Cincinnati")
+  
 cinci_bg2 <- cinci_bg |>
   as_tibble() |>
   group_by(Municipality, Neighborhood, variable, label, concept) |>
   summarise(estimate = sum(estimate)) |>
-  mutate(
-    County = "Hamilton",
-    State = "Ohio"
-    )
+  mutate(County = "Hamilton")
 
 oh_muni <- get_acs(
   geography = "county subdivision",
@@ -281,7 +280,8 @@ oki_muni <- rbind(oh_muni, ky_muni) |>
     Municipality = str_remove(Municipality, "The Village of "),
     Municipality = str_to_title(Municipality),
     County = str_remove(County, " County")
-  )
+  ) |>
+  select(-State)
 
 oki_muni2 <- as_tibble(oki_muni) |>
   select(Municipality:estimate) |>
@@ -294,17 +294,18 @@ oki_muni2 <- as_tibble(oki_muni) |>
       TRUE ~ County
       )
     ) |>
-  group_by(Municipality, County, State, variable, label, concept) |>
+  group_by(Municipality, County, variable, label, concept) |>
   summarise(estimate = sum(estimate)) |>
   mutate(Neighborhood = NA) |>
   ungroup() |>
   rbind(cinci_bg2) |>
   separate_wider_delim(
     label,
-    names = c("Group1", "Group2", "Group3", "Group4"),
+    names = paste0("Group", 1:5),
     delim = ":!!",
     too_few = "align_start"
-  )
+  ) |>
+  mutate(Neighborhood = coalesce(Neighborhood, Municipality))
 
 pyramid <- filter(oki_muni2, concept == "SEX BY AGE") |>
   filter(!is.na(Group3)) |>
@@ -342,24 +343,34 @@ pyramid <- filter(oki_muni2, concept == "SEX BY AGE") |>
         )
       )
     ) |>
-  group_by(State, County, Municipality, Neighborhood, Gender, Age) |>
+  group_by(County, Municipality, Neighborhood, Gender, Age) |>
   summarise(Population = sum(estimate)) 
 
-hoods <- pyramid |>
+areas <- pyramid |>
   ungroup() |>
-  distinct(State, County, Municipality, Neighborhood) |>
-  arrange(State, County, Municipality, Neighborhood) |>
+  distinct(County, Municipality, Neighborhood) |>
+  arrange(str_to_title(Neighborhood), County) |>
   mutate(HoodID = row_number())
 
-pyramid <- inner_join(pyramid, hoods) |>
-  group_by(State, County, Municipality, Neighborhood) |>
+hoodnums <- areas$HoodID[areas$Municipality%in% c(
+  "Cincinnati", 
+  "Norwood", 
+  "St. Bernard", 
+  "Elmwood Place"
+  ) & areas$Neighborhood != "Cincinnati"]
+
+muninums <- areas$HoodID[areas$Neighborhood == areas$Municipality]
+  
+pyramid <- inner_join(pyramid, areas) |>
+  group_by(County, Municipality, Neighborhood) |>
   mutate(
     Total = sum(Population),
     Share = round(100*Population/Total, 1)
     ) 
 
 pop_pyr <- function(k){
-  x <- filter(pyramid, HoodID == k)
+  x <- filter(pyramid, HoodID == k) |>
+    mutate(Neighborhood = coalesce(Neighborhood, Municipality))
   
   ggplot(
     x, 
@@ -375,18 +386,23 @@ pop_pyr <- function(k){
       x = NULL, 
       y = "% of population", 
       fill = NULL, 
-      title = x$Municipality[1]
+      title = x$Neighborhood[1]
       ) +
     scale_y_continuous(
       limits = c(-30, 30), 
       breaks = seq(-25, 25, 5),
       labels = c(25, 20, 15, 10, 5, seq(0, 25, 5))
       ) +
+    scale_fill_manual(values = c(cchmcpink, cchmclightblue)) +
     theme_minimal() +
     theme(plot.title = element_text(hjust = .5))
 }
 
-pyr_popups <- lapply(1:nrow(hoods), function(k) {
+pyr_popup_muni <- lapply((muninums), function(k) {
+  pop_pyr(k)
+})
+
+pyr_popup_hood <- lapply((hoodnums), function(k) {
   pop_pyr(k)
 })
 
@@ -528,10 +544,12 @@ race_rates <- hood_baselines(race)
 
 lang_rates <- hood_baselines(lang)
 
-race_lang <- rbind(race_rates, lang_rates)
+race_lang <- rbind(race_rates, lang_rates) |>
+  mutate(Neighborhood = coalesce(Neighborhood, Municipality)) |>
+  inner_join(areas)
 
-demo_graph <- function(i) {
-  x <- inner_join(race_lang, hoods[i,]) |>
+demo_graph <- function(k) {
+  x <- filter(race_lang, HoodID == k) |>
     mutate(
       name = factor(
         name, 
@@ -541,7 +559,7 @@ demo_graph <- function(i) {
   
   ggplot(x, aes(x = name, y = value, fill = Shade)) +
     geom_bar(stat = "identity", color = "black") +
-    labs(x = NULL, y = "%", title = unique(x$Municipality)) +
+    labs(x = NULL, y = "%", title = unique(x$Neighborhood)) +
     scale_y_continuous(
       limits = c(0, 1),
       breaks = seq(0, 1, .2),
@@ -571,12 +589,15 @@ demo_graph <- function(i) {
     )
 } 
 
-demo_popups <- lapply(1:nrow(hoods), function(k) {
+demo_popup_muni <- lapply((muninums), function(k) {
   demo_graph(k)
 })
 
-hh <- filter(
-  oki_muni2, 
+demo_popup_hood <- lapply((hoodnums), function(k) {
+  demo_graph(k)
+})
+
+hh <- filter(oki_muni2, 
   variable %in% c(
     paste0("B11012_00", c(3, 4, 6, 7, 9)), 
     paste0("B11012_0", c(10:12, 14:17))
@@ -585,9 +606,9 @@ hh <- filter(
   mutate(
     HHType = case_when(
       str_detect(Group2, "couple") ~ 
-        ifelse(str_starts(Group3, "With children"), "Two-parent", "Couple"),
+        ifelse(str_starts(Group3, "With children"), "TwoParent", "Couple"),
       TRUE ~ 
-        ifelse(str_starts(Group3, "With children"), "Single-parent", "Single")
+        ifelse(str_starts(Group3, "With children"), "SingleParent", "Single")
     )
   ) |>
   group_by(County, Municipality, Neighborhood, HHType) |>
@@ -596,286 +617,123 @@ hh <- filter(
   pivot_wider(
     id_cols = c(County, Municipality, Neighborhood),
     names_from = HHType,
-    values_from = HH
-  )
+    values_from = HH,
+    names_prefix = "Total"
+  ) |>
+  inner_join(pops) |>
+  mutate(
+    RateCouple = TotalCouple/PopHH,
+    RateSingle = TotalSingle/PopHH,
+    RateSingleParent = TotalSingleParent/PopHH,
+    RateTwoParent = TotalTwoParent/PopHH
+  ) |>
+  select(County:TotalTwoParent, PopHH, RateCouple:RateTwoParent)
 
+hh_rates <- hood_baselines(hh) |>
+  inner_join(areas)
 
-
-
-
-
-
-
-
-race_tot <- race |>
-  ungroup() |>
-  summarise(
-    across(
-      c(
-        LimitedEnglish:OtherThanEnglish, 
-        Black_Total, 
-        Hispanic_Total,
-        White_Total,
-        Population
-        ), 
-      sum
+hh_graph <- function(k) {
+  x <- filter(hh_rates, HoodID == k) |>
+    mutate(
+      name = factor(
+        name, 
+        levels = c("TwoParent", "SingleParent", "Couple", "Single")
       )
-    ) |>
-  mutate(
-    across(c(LimitedEnglish, OtherThanEnglish), \(x) x/OverAge5),
-    across(Black_Total:White_Total, \(x) x/Population)
     )
+  
+  ggplot(x, aes(x = name, y = value, fill = Shade)) +
+    geom_bar(stat = "identity", color = "black") +
+    labs(x = NULL, y = "%", title = unique(x$Neighborhood)) +
+    scale_y_continuous(
+      limits = c(0, 1),
+      breaks = seq(0, 1, .2),
+      labels = seq(0, 100, 20)
+    ) +
+    scale_x_discrete(
+      labels = c(
+        "Children with\ntwo adults",
+        "Children with\none adult",
+        "Adults,\nno children",
+        "Single adult"
+      )
+    ) +
+    theme_minimal() +
+    guides(fill = "none") +
+    theme(plot.title = element_text(hjust = .5)) + 
+    geom_text(
+      aes(label = paste0(round(value*100, 1), "%"), y = Textloc), 
+      size = 4
+    ) +
+    scale_fill_gradient2(
+      limits = c(0, 1), 
+      high = cchmcdarkpurple, 
+      low = cchmcdarkgreen, 
+      mid = cchmclightblue
+    )
+} 
 
+hh_popup_muni <- lapply((muninums), function(k) {
+  hh_graph(k)
+})
 
-hh <- oki_muni2 |>
-  filter(
-    str_detect(concept, "GEOGRAPHICAL MOBILITY") |
-      str_detect(concept, "HOUSEHOLDS")
-  )
+hh_popup_hood <- lapply((hoodnums), function(k) {
+  hh_graph(k)
+})
 
-
-hamco_bg2 <- hamco_bg |>
-  as_tibble() |>
-  group_by(GEOID, category) |>
-  summarise(estimate = sum(estimate)) |>
-  pivot_wider(
-    id_cols = GEOID,
-    names_from = category,
-    values_from = estimate
-  ) |>
-  mutate(Income = MedianHHIncome*Households) |>
-  inner_join(allocations, multiple = "all") |>
-  mutate(across(c(Age25:LimitedEnglish, Population:Income), \(x) x*Allocation))
-
-hamco_bg_pyr <- inner_join(hamco_bg, vars, by = c("variable" = "name")) |>
-  filter(Group1 %in% c("Male", "Female"))
-
-hood_inc <- hamco_bg2 |>
-  filter(
-    Municipality == "Cincinnati",
-    !is.na(Income)
-  ) |>
-  group_by(Neighborhood) |>
-  summarise(
-    Income = sum(Income),
-    IncomeHH = sum(Households)
-  )
-
-cinci_hood <- filter(hamco_bg2, Municipality == "Cincinnati") |>
+cinci_hh <- filter(hamco_bg, variable == "B11012_001") |>
+  mutate(TractID = str_trunc(GEOID, 11, "right", ellipsis = "")) |>
+  group_by(TractID) |>
+  mutate(TractHH = sum(estimate)) |>
+  group_by(Neighborhood, Municipality, TractID) |>
+  mutate(HoodTractHH = sum(estimate)) |>
+  distinct(TractID, Neighborhood, TractHH, HoodTractHH) |>
+  mutate(Allocation = HoodTractHH/TractHH) |>
+  select(Allocation) |>
   ungroup() |>
-  select(Age25:LimitedEnglish, Population:White, Municipality, Neighborhood) |>
-  group_by(Municipality, Neighborhood) |>
-  summarise(across(Age25:White, sum)) |>
-  left_join(hood_inc)
-
-hh_tract <- filter(hamco_bg2, Municipality == "Cincinnati") |>
-  mutate(Tract = str_trunc(GEOID, 11, "right", ellipsis = "")) |>
-  group_by(Tract, Neighborhood) |>
-  summarise(Households = sum(Households)) |>
-  group_by(Tract) |>
-  mutate(
-    TractHH = sum(Households),
-    Allocation = Households/TractHH
-  )
+  filter(Municipality == "Cincinnati")
 
 hood_assistance <- get_acs(
   geography = "tract",
-  variables = "B19058_002",
+  variables = c("B19058_002", "B11012_001"),
   county = "Hamilton",
   state = "OH"
   ) |>
-  inner_join(
-    select(hh_tract, -Households), 
-    by = c("GEOID" = "Tract"),
-    multiple = "all"
-  ) |>
   mutate(
-    Assistance = estimate*Allocation,
-    HH = TractHH*Allocation
+    Category = ifelse(variable == "B11012_001", "PopHH", "TotalAssistance")
+    ) |>
+  pivot_wider(
+    id_cols = GEOID,
+    names_from = Category,
+    values_from = estimate
   ) |>
-  group_by(Neighborhood) |>
-  summarise(Assistance = sum(Assistance))
+  inner_join(cinci_hh, by = c("GEOID" = "TractID"), multiple = "all") |>
+  mutate(across(PopHH:TotalAssistance, \(x) x*Allocation)) |>
+  group_by(Municipality, Neighborhood) |>
+  summarise(across(PopHH:TotalAssistance, sum)) |>
+  mutate(County = "Hamilton")
 
-cinci_hood <- inner_join(cinci_hood, hood_assistance) |>
+assistance <- filter(oki_muni2, variable %in% c("B19058_002", "B11012_001")) |>
+  filter(Neighborhood == Municipality) |>
   mutate(
-    County = "Hamilton",
-    State = "Ohio",
-    across(Age25:Assistance, round)
-  ) 
-
-oh_cs <- get_acs(
-  geography = "county subdivision",
-  variables = c(bg_var_list, "B19058_002"),
-  state = "OH",
-  county = c("Clermont", "Warren", "Butler", "Hamilton"),
-  year = 2021,
-  geometry = TRUE
-  )
-
-ky_cs <- get_acs(
-  geography = "county subdivision",
-  variables = c(bg_var_list, "B19058_002"),
-  state = "KY",
-  county = c("Boone", "Campbell", "Kenton"),
-  year = 2021,
-  geometry = TRUE
-  )
-
-in_cs <- get_acs(
-  geography = "county subdivision",
-  variables = c(bg_var_list, "B19058_002"),
-  state = "IN",
-  county = "Dearborn",
-  year = 2021,
-  geometry = TRUE
-  )
-
-oki_cs <- rbind(oh_cs, ky_cs) |>
-  rbind(in_cs) |>
-  inner_join(cat_frame) |>
-  separate_wider_delim(
-    NAME, 
-    delim = ", ", 
-    names = c("Municipality", "County", "State")
+    Category = ifelse(variable == "B11012_001", "PopHH", "TotalAssistance")
+    ) |>
+  pivot_wider(
+    id_cols = c(County, Municipality, Neighborhood),
+    names_from = Category,
+    values_from = estimate
   ) |>
+  rbind(hood_assistance) |>
   mutate(
-    Municipality = str_remove(Municipality, " city"),
-    Municipality = str_remove(Municipality, " village"),
-    Municipality = str_remove(Municipality, " CCD"),
-    Municipality = str_remove(Municipality, "The Village of "),
-    Municipality = str_to_title(Municipality),
-    County = str_remove(County, " County"),
-    County = case_when(
-      Municipality == "Loveland" ~ "Hamilton",
-      Municipality == "Milford" ~ "Clermont",
-      TRUE ~ County
-    )
-  ) |>
-  filter(
-    !is.na(estimate),
-    estimate > 0
-  )
-
-oki_no_income <- filter(oki_cs, category != "MedianHHIncome") |>
+    value = TotalAssistance/PopHH,
+    name = "Assistance"
+    ) |>
+  select(County:Neighborhood, value, name)
+  
+hood_di <- filter(cinci_bg, variable == "B01001_001") |>
   as_tibble() |>
-  group_by(Municipality, County, State, category) |>
-  summarise(estimate = sum(estimate)) |>
-  pivot_wider(
-    id_cols = c(Municipality, State, County),
-    names_from = category,
-    values_from = estimate
-  ) |>
-  mutate(
-    across(c(Age25:LimitedEnglish, Population:White), \(x) coalesce(x, 0)),
-    Neighborhood = NA
-  )
-
-oki_income <- filter(oki_cs, category %in% c("MedianHHIncome", "Households")) |>
-  pivot_wider(
-    id_cols = c(GEOID, Municipality, County, State),
-    names_from = category,
-    values_from = estimate
-  ) |>
-  mutate(Income = MedianHHIncome*Households) |>
-  group_by(Municipality, County, State) |>
-  summarise(
-    Income = sum(Income),
-    IncomeHH = sum(Households)
-  ) |>
-  inner_join(oki_no_income)
-
-oh_county <- get_acs(
-  geography = "county",
-  variables = c(bg_var_list, "B19058_002"),
-  state = "OH",
-  county = c("Clermont", "Warren", "Butler", "Hamilton"),
-  year = 2021,
-  geometry = TRUE
-  )
-
-ky_county <- get_acs(
-  geography = "county",
-  variables = c(bg_var_list, "B19058_002"),
-  state = "KY",
-  county = c("Campbell", "Kenton", "Boone"),
-  year = 2021,
-  geometry = TRUE
-  )
-
-in_county <- get_acs(
-  geography = "county",
-  variables = c(bg_var_list, "B19058_002"),
-  state = "IN",
-  county = "Dearborn",
-  year = 2021,
-  geometry = TRUE
-  )
-
-oki_county <- rbind(oh_county, ky_county) |>
-  rbind(in_county) |>
-  inner_join(cat_frame) |>
-  separate_wider_delim(
-    cols = NAME, 
-    delim = ", ", 
-    names = c("County", "State")
-  ) |>
-  mutate(County = str_remove(County, " County"))
-
-oki_county2 <- oki_county |>
-  as_tibble() |>
-  group_by(County, State, category) |>
-  summarise(estimate = sum(estimate)) |>
-  pivot_wider(
-    id_cols = c(County, State), 
-    names_from = category, 
-    values_from = estimate
-  ) |>
-  mutate(
-    Income = MedianHHIncome*Households,
-    IncomeHH = Households,
-    Municipality = NA,
-    Neighborhood = NA
-  ) |>
-  select(-MedianHHIncome)
-
-metro <- oki_county2 |>
-  ungroup() |>
-  summarise(across(Age25:IncomeHH, sum)) |>
-  mutate(
-    County = "All",
-    State = "All",
-    Municipality = NA,
-    Neighborhood = NA
-  )
-
-oh_tract <- get_acs(
-  geography = "tract",
-  variables = "B01001_001",
-  state = "OH",
-  county = c("Clermont", "Warren", "Butler", "Hamilton"),
-  year = 2021
-  )
-
-ky_tract <- get_acs(
-  geography = "tract",
-  variables = "B01001_001",
-  state = "KY",
-  county = c("Kenton", "Campbell", "Boone"),
-  year = 2021
-  )
-
-in_tract <- get_acs(
-  geography = "tract",
-  variables = "B01001_001",
-  state = "IN",
-  county = c("Dearborn"),
-  year = 2021
-  )
-
-hood_di <- filter(hamco_bg2, Municipality == "Cincinnati") |>
   mutate(census_tract_fips = str_trunc(GEOID, 11, "right", ellipsis = "")) |>
   group_by(census_tract_fips, Neighborhood, Municipality) |>
-  summarise(Population = sum(Population)) |>
+  summarise(Population = sum(estimate)) |>
   group_by(Municipality, Neighborhood) |>
   mutate(
     HoodPop = sum(Population),
@@ -884,12 +742,33 @@ hood_di <- filter(hamco_bg2, Municipality == "Cincinnati") |>
   inner_join(di) |>
   mutate(DIWeight = TractWeight*dep_index) |>
   summarise(DeprivationIndex = sum(DIWeight)) |>
-  mutate(
-    County = "Hamilton",
-    State = "Ohio"
-  )
+  mutate(County = "Hamilton")
 
-cs_di <- rbind(oh_tract, ky_tract) |>
+oh_tract <- get_acs(
+  geography = "tract",
+  variables = "B01001_001",
+  state = "OH",
+  county = c("Clermont", "Warren", "Butler", "Hamilton"),
+  year = 2021
+)
+
+ky_tract <- get_acs(
+  geography = "tract",
+  variables = "B01001_001",
+  state = "KY",
+  county = c("Kenton", "Campbell", "Boone"),
+  year = 2021
+)
+
+in_tract <- get_acs(
+  geography = "tract",
+  variables = "B01001_001",
+  state = "IN",
+  county = c("Dearborn"),
+  year = 2021
+)
+
+dep_index <- rbind(oh_tract, ky_tract) |>
   rbind(in_tract) |>
   full_join(select(oki, County:Allocation, GEOID), multiple = "all") |>
   mutate(Population = estimate*Allocation) |>
@@ -904,84 +783,342 @@ cs_di <- rbind(oh_tract, ky_tract) |>
       TRUE ~ County
     )
   ) |>
-  group_by(Municipality, County, State) |>
+  group_by(Municipality, County) |>
   mutate(
     TownPop = sum(Population),
     TractShare = Population/TownPop,
     DIWeight = TractShare*dep_index
   ) |>
   summarise(DeprivationIndex = sum(DIWeight)) |>
-  mutate(Neighborhood = NA)
+  mutate(Neighborhood = Municipality) |>
+  rbind(hood_di) |>
+  rename(value = DeprivationIndex) |>
+  mutate(name = "DI")
 
-county_di <- select(oki_income, Municipality, County, State, Population) |>
-  inner_join(cs_di) |>
-  mutate(DIWeight = DeprivationIndex*Population) |>
-  group_by(State, County) |>
+digraph_rates <- function(k, var){
+  z <- filter(oki_muni2, variable == var) |>
+    inner_join(k) |>
+    filter(Neighborhood == Municipality) |>
+    mutate(Weight = value*estimate) |>
+    summarise(
+      Weight = sum(Weight),
+      Pop = sum(estimate)
+    ) |>
+    mutate(
+      Mean = Weight/Pop,
+      Min = min(k$value),
+      Max = max(k$value)
+      ) |>
+    select(Mean:Max) |>
+    cross_join(k) |>
+    mutate(
+      Scale = (value-Min)/(Max-Min),
+      Textloc = ifelse(Scale > .9, Scale - .025, Scale + .04)
+      )
+  z
+}
+
+di_rates <- digraph_rates(dep_index, "B01001_001", "down") |>
+  mutate(Shade = 1-Scale)
+
+hood_income <- filter(cinci_bg, variable %in% c("B11012_001", "B19049_001")) |>
+  as_tibble() |>
+  mutate(Category = ifelse(variable == "B19049_001", "MedianIncome", "HH")) |>
+  pivot_wider(
+    id_cols = c(Municipality, Neighborhood, GEOID),
+    names_from = Category,
+    values_from = estimate
+  ) |>
+  filter(!is.na(MedianIncome)) |>
+  mutate(Income = MedianIncome*HH) |>
+  group_by(Municipality, Neighborhood) |>
   summarise(
-    DIWeight = sum(DIWeight),
-    Population = sum(Population)
+    Income = sum(Income),
+    HH = sum(HH)
+    ) |>
+  mutate(
+    value = Income/HH,
+    County = "Hamilton"
+    )
+
+oki_income <- rbind(oh_muni, ky_muni) |>
+  rbind(in_muni) |>
+  filter(variable %in% c("B11012_001", "B19049_001")) |>
+  separate_wider_delim(
+    NAME,
+    delim = ", ",
+    names = c("Municipality", "County", "State")
   ) |>
   mutate(
-    DeprivationIndex = DIWeight/Population,
-    DIWeight = DeprivationIndex*Population,
-    Municipality = NA,
-    Neighborhood = NA
+    Municipality = str_remove(Municipality, " city"),
+    Municipality = str_remove(Municipality, " village"),
+    Municipality = str_remove(Municipality, "The Village of "),
+    Municipality = str_remove(Municipality, "CCD"),
+    Municipality = str_to_title(Municipality),
+    County = str_remove(County, " County"),
+    County = case_when(
+      Municipality == "Loveland" ~ "Hamilton",
+      Municipality == "Fairfield" ~ "Butler",
+      Municipality == "Milford" ~ "Clermont",
+      TRUE ~ County
+    )
   ) |>
-  select(-DIWeight)
-
-metro_di <- county_di |>
-  mutate(DIWeight = DeprivationIndex*Population) |>
-  ungroup() |>
+  mutate(Category = ifelse(variable == "B19049_001", "MedianIncome", "HH")) |>
+  pivot_wider(
+    id_cols = c(GEOID, Municipality, County),
+    names_from = Category,
+    values_from = estimate
+  ) |>
+  filter(!is.na(MedianIncome)) |>
+  mutate(Income = HH*MedianIncome) |>
+  group_by(Municipality, County) |>
   summarise(
-    Population = sum(Population),
-    DIWeight = sum(DIWeight)
+    HH = sum(HH),
+    Income = sum(Income)
   ) |>
+  mutate(value = Income/HH) |>
+  rbind(hood_income) |>
+  select(-c(HH, Income)) |>
   mutate(
-    DeprivationIndex = DIWeight/Population,
-    State = "All",
-    County = "All",
-    Municipality = NA,
-    Neighborhood = NA
-  ) |>
-  select(DeprivationIndex:Neighborhood)
+    Municipality = str_trim(Municipality),
+    name = "MedianIncome",
+    Neighborhood = coalesce(Neighborhood, Municipality)
+    )
 
-di_all <- rbind(hood_di, cs_di) |>
-  rbind(select(county_di, -Population)) |>
-  rbind(metro_di)
+income_rates <- digraph_rates(oki_income, "B11012_001") |>
+  mutate(Shade = Scale)
 
-census <- rbind(cinci_hood, oki_income) |>
-  rbind(oki_county2) |>
-  ungroup() |>
-  rbind(metro) |>
-  inner_join(di_all) |>
+di_meas <- oki_muni2 |>
+  filter(variable %in% c(paste0("B15003_0", 17:25), "B17010_002", "B25002_003") |
+           str_detect(variable, "B27010")) |>
   mutate(
-    AssistanceRate = Assistance/Households,
-    BlackRate = Black/Population,
-    ChildRate = Children/Population,
-    OtherLanguage = Age5-English,
-    OtherLanguageRate = OtherLanguage/Age5,
-    ChildHHRate = HHWithChildren/Households,
-    HighSchoolRate = HighSchool/Age25,
-    HispanicRate = Hispanic/Population,
-    LimitedEnglishRate = LimitedEnglish/Age5,
-    PovertyRate = Poverty/Families,
-    UninsuredRate = Uninsured/Population,
-    VacancyRate = Vacant/HousingUnits,
-    WhiteRate = White/Population,
-    MedianHHIncome = Income/IncomeHH
+    Category = case_when(
+      str_starts(concept, "EDUCATIONAL") ~ "NoHighSchool",
+      str_starts(concept, "POVERTY") ~ "Poverty",
+      str_starts(concept, "OCCUPANCY") ~ "Vacant",
+      TRUE ~ "Uninsured"
+    )
   ) |>
-  select(
-    State, County, Municipality, Neighborhood,
-    Population, White, WhiteRate, Black, BlackRate, Hispanic, HispanicRate,
-    Children, ChildRate, Uninsured, UninsuredRate,
-    Households, HHWithChildren, ChildHHRate, Assistance, AssistanceRate, 
-    MedianHHIncome,
-    Age25, HighSchool, HighSchoolRate,
-    Families, Poverty, PovertyRate,
-    HousingUnits, Vacant, VacancyRate,
-    Age5, OtherLanguage, OtherLanguageRate, LimitedEnglish, LimitedEnglishRate
+  group_by(Municipality, County, Neighborhood, Category) |>
+  summarise(estimate = sum(estimate)) |>
+  pivot_wider(
+    id_cols = c(Municipality, County, Neighborhood),
+    names_from = Category,
+    names_prefix = "Total",
+    values_from = estimate
   ) |>
-  full_join(di_all)
+  inner_join(pops)
+
+pov <- select(di_meas, ends_with("Poverty")) |>
+  mutate(
+    value = TotalPoverty/PopPoverty,
+    name = "Poverty"
+    ) |>
+  select(-c(TotalPoverty, PopPoverty))
+
+pov_rates <- digraph_rates(pov, "B17010_001") |>
+  mutate(Shade = 1-Scale)
+
+ins <- select(di_meas, TotalUninsured, PopPopulation) |>
+  mutate(value = TotalUninsured/PopPopulation) |>
+  select(value)
+
+ins_rates <- digraph_rates(ins, "B01001_001") |>
+  mutate(
+    name = "Uninsured",
+    Shade = 1-Scale
+  )
+
+assist_rates <- digraph_rates(assistance, "B11012_001") |>
+  mutate(Shade = 1-Scale) 
+
+hs <- select(di_meas, Municipality:TotalNoHighSchool, PopOver25) |>
+  mutate(
+    value = TotalNoHighSchool/PopOver25,
+    name = "NoHS"
+  ) |>
+  select(Municipality:Neighborhood, name, value)
+
+hs_rates <- digraph_rates(hs, "B15003_001") |>
+  mutate(Shade = Scale)
+
+vac <- di_meas |>
+  mutate(
+    value = TotalVacant/PopHousingUnits,
+    name = "Vacancy"
+    ) |>
+  select(Municipality:Neighborhood, name, value)
+
+vac_rates <- digraph_rates(vac, "B25002_001") |>
+  mutate(Shade = 1-Scale)
+
+di_all <- rbind(di_rates, pov_rates) |>
+  rbind(assist_rates) |>
+  rbind(income_rates) |>
+  rbind(ins_rates) |>
+  rbind(hs_rates) |>
+  rbind(vac_rates) |>
+  inner_join(areas)
+
+di_graph <- function(k){
+  x <- filter(di_all, HoodID == k) |>
+    mutate(
+      name = factor(
+        name, 
+        levels = c(
+          "DI", 
+          "Poverty", 
+          "Assistance", 
+          "MedianIncome", 
+          "Uninsured", 
+          "NoHS", 
+          "Vacancy"
+          )
+        ),
+      Label = case_when(
+        name == "DI" ~ as.character(round(value, 3)),
+        name == "MedianIncome" ~ 
+          paste0("$", format(as.integer(value), big.mark = ",")),
+        TRUE ~ paste0(round(value*100, 1), "%")
+        )
+      )
+  
+  ggplot(x, aes(x = name, y = Scale, fill = Shade)) +
+    geom_bar(stat = "identity") +
+    labs(x = NULL, y = "%", title = unique(x$Neighborhood)) +
+    scale_y_continuous(
+      limits = c(0, 1),
+      breaks = seq(0, 1, .2),
+      labels = NULL
+    ) +
+    scale_x_discrete(
+      labels = c(
+        "Deprivation\nIndex",
+        "Poverty\nRate",
+        "On Public\nAssistance",
+        "Median\nHousehold\nIncome",
+        "No Health\nInsurance",
+        "High School\nGraduation",
+        "Housing\nVacancies"
+      )
+    ) +
+    theme_minimal() +
+    guides(fill = "none") +
+    theme(plot.title = element_text(hjust = .5)) + 
+    geom_text(aes(label = Label, y = Textloc), size = 4) +
+    scale_fill_gradient2(
+      limits = c(0, 1), 
+      high = cchmcdarkpurple, 
+      low = cchmcdarkgreen,
+      mid = cchmclightblue,
+      midpoint = .5
+    )
+}
+
+di_popup_muni <- lapply((muninums), function(k) {
+  di_graph(k)
+})
+
+di_popup_hood <- lapply((hoodnums), function(k) {
+  di_graph(k)
+})
+
+mobile <- oki_muni2 |>
+  filter(variable %in% c("B07201_002", "B07201_004", "B07201_014")) |>
+  mutate(
+    Category = case_when(
+      str_starts(Group2, "Same") ~ "SameHome",
+      !is.na(Group3) ~ "SameCity",
+      TRUE ~ "Abroad"
+    )
+  ) |>
+  group_by(Municipality, County, Neighborhood, Category) |>
+  summarise(estimate = sum(estimate)) |>
+  pivot_wider(
+    id_cols = c(Municipality, County, Neighborhood),
+    names_from = Category,
+    names_prefix = "Total",
+    values_from = estimate
+  ) |>
+  inner_join(pops) |>
+  mutate(
+    TotalOtherUS = PopMobility-TotalSameHome-TotalSameCity-TotalAbroad,
+    RateSameHome = TotalSameHome/PopMobility,
+    RateSameCity = TotalSameCity/PopMobility,
+    RateOtherUS = TotalOtherUS/PopMobility,
+    RateAbroad = TotalAbroad/PopMobility
+    ) |>
+  select(Municipality:TotalSameHome, PopMobility, TotalOtherUS:RateAbroad)
+
+mobile_rates <- hood_baselines(mobile) |>
+  inner_join(areas)
+
+mobile_graph <- function(k){
+  x <- filter(mobile_rates, HoodID == k) |>
+    mutate(
+      name = factor(
+        name, 
+        levels = c("SameHome", "SameCity", "OtherUS",  "Abroad")
+      )
+    )
+  
+  ggplot(x, aes(x = name, y = value, fill = Shade)) +
+    geom_bar(stat = "identity", color = "black") +
+    labs(x = NULL, y = "%", title = unique(x$Neighborhood)) +
+    scale_y_continuous(
+      limits = c(0, 1),
+      breaks = seq(0, 1, .2),
+      labels = seq(0, 100, 20)
+    ) +
+    scale_x_discrete(
+      labels = c(
+        "Same Home",
+        "Same City",
+        "Elsewhere\nin U.S.",
+        "Other Country"
+      )
+    ) +
+    theme_minimal() +
+    guides(fill = "none") +
+    theme(plot.title = element_text(hjust = .5)) + 
+    geom_text(
+      aes(label = paste0(round(value*100, 1), "%"), y = Textloc), 
+      size = 4
+    ) +
+    scale_fill_gradient2(
+      limits = c(-1, 1), 
+      high = cchmcdarkpurple, 
+      low = cchmcdarkgreen, 
+      mid = cchmclightblue
+    )
+}
+
+mobile_popup_muni <- lapply((muninums), function(k) {
+  mobile_graph(k)
+})
+
+mobile_popup_hood <- lapply((hoodnums), function(k) {
+  mobile_graph(k)
+})
+
+muni_lines <- oki_muni |>
+  mutate(
+    County = case_when(
+      Municipality == "Loveland" ~ "Hamilton",
+      Municipality == "Milford" ~ "Clermont",
+      Municipality == "Fairfield" ~ "Butler",
+      TRUE ~ County
+    )
+  ) |>
+  group_by(Municipality, County) |>
+  summarise(geometry = st_union(geometry)) |>
+  st_as_sf()
+  
+hood_lines <- hamco_bg |>
+  filter(Municipality == "Cincinnati") |>
+  group_by(Municipality, Neighborhood) |>
+  summarise(geometry = st_union(geometry)) |>
+  st_as_sf()
 
 con <- dbConnect(odbc::odbc(), "ClarityProd")
 
@@ -1072,10 +1209,10 @@ admits <- dbGetQuery(con, "
         "J45.52", 
         "J45.901", 
         "J45.902"
-        ),
+      ),
       1,
       0
-      ),
+    ),
     Diabetes = ifelse(
       disch_icd_1 %in% c(
         "E08.10",
@@ -1113,9 +1250,9 @@ admits <- dbGetQuery(con, "
       10401092,	
       10401093,	
       10401094
-      ),
-      1,
-      0
+    ),
+    1,
+    0
     )
   ) |>
   left_join(asthma_exceptions) |>
@@ -1123,7 +1260,7 @@ admits <- dbGetQuery(con, "
     AsthmaException = coalesce(AsthmaException, 0),
     Asthma = ifelse(Asthma == 1 & AsthmaException == 0, 1, 0),
     county = str_to_title(county)
-    )
+  )
 
 adds <- select(registry, pat_id:county, contact_date) |>
   rbind(select(admits, pat_id:zip, county)) |>
@@ -1134,7 +1271,7 @@ adds <- select(registry, pat_id:county, contact_date) |>
        county %in% c("Hamilton", "Butler", "Clermont", "Warren")) |
       (state == "Kentucky" & county %in% c("Boone", "Campbell", "Kenton")) |
       (state == "Indiana" & county == "Dearborn")
-    ) |>
+  ) |>
   unique()
 
 adds_unique <- adds |>
@@ -1143,7 +1280,7 @@ adds_unique <- adds |>
 
 adds <- inner_join(adds, adds_unique)
 
-adds_cleaned <- adds_unique[1:42600,] |>
+adds_cleaned <- adds_unique |>
   mutate(
     Add1 = case_when(
       str_detect(add_line_1, "4933 Allen") ~ "4933 Allens Ridge Dr",
@@ -1160,7 +1297,7 @@ adds_cleaned <- adds_unique[1:42600,] |>
       str_sub(Add1, 1, 1) %in% LETTERS, 
       str_sub(Add1, 2, str_length(Add1)), 
       Add1
-      ),
+    ),
     Add1 = ifelse(
       str_sub(Add1, 1, 1) %in% LETTERS, 
       str_sub(Add1, 2, str_length(Add1)), 
@@ -1195,8 +1332,6 @@ cleaned_unique <- adds_cleaned |>
 adds_cleaned <- inner_join(adds_cleaned, cleaned_unique)
 adds <- left_join(adds, select(adds_cleaned, AddID1, AddID2))
 
-#registry <- left_join(registry, select(adds, pat_id:zip, contact_date, AddID2))
-
 for_geocoder <- cleaned_unique |>
   mutate(
     state = case_when(
@@ -1217,147 +1352,294 @@ geocoded <- read.csv("for_degauss_geocoded_v3.0.2.csv") |>
   filter(
     precision == "range", 
     geocode_result != "imprecise_geocode"
-    ) |>
+  ) |>
   rename(AddID2 = ID) |>
-  st_as_sf(coords = c("lon", "lat"), crs = 'NAD83', remove = FALSE)
+  st_as_sf(coords = c("lon", "lat"), crs = 'NAD83', remove = FALSE) |>
+  st_join(muni_lines, left = FALSE) |>
+  as_tibble() 
 
-oki_munis <- oki_cs |>
-  distinct(Municipality, County, State, geometry) |>
-  st_as_sf() |>
-  st_join(geocoded) |>
+geocoded2 <- geocoded |>
+  distinct(AddID2, County, Municipality) |>
   group_by(AddID2) |>
   mutate(count = n())
 
-muni_singles <- filter(oki_munis, count == 1)
+muni_single <- filter(geocoded2, count == 1) |>
+  select(-count)
 
-cinci1 <- filter(muni_singles, Municipality == "Cincinnati") |>
-  as_tibble() |>
-  select(AddID2) |>
+muni_multi <- filter(geocoded2, count > 1) |>
+  inner_join(adds, multiple = "all") |>
+  filter(
+    add_line_1 == "6901 Ken Arbre Dr" & Municipality == "Sycamore Township" |
+      add_line_1 == "6500 Ridge Rd" & Municipality == "Columbia Township"
+  ) |>
+  select(AddID2, Municipality, County)
+
+muni_add <- rbind(muni_single, muni_multi)
+
+hooded1 <- filter(muni_add, Municipality != "Cincinnati") |>
+  mutate(Neighborhood = NA) 
+  
+cinci <- filter(muni_add, Municipality == "Cincinnati") |>
   inner_join(geocoded) |>
-  select(AddID2, geometry) |>
-  st_as_sf()
-
-hooded1 <- filter(muni_singles, Municipality != "Cincinnati") |>
-  as_tibble() |>
-  select(AddID2, State, County, Municipality) |>
-  mutate(Neighborhood = NA)
-
-cinci_bg <- st_join(cinci1, distinct(hamco_bg, GEOID, geometry)) |>
-  inner_join(filter(allocations, Municipality == "Cincinnati")) |>
-  distinct(AddID2, Municipality, Neighborhood) |>
+  st_as_sf() |>
+  st_join(hood_lines) |>
   group_by(AddID2) |>
   mutate(count = n()) |>
-  arrange(-count, AddID2)
+  rename(Municipality = Municipality.x)
 
-hooded2 <- filter(cinci_bg, count == 1) |>
-  select(-count) |>
-  mutate(
-    County = "Hamilton",
-    State = "Ohio"
-  )
+hooded2 <- filter(cinci, count == 1) |>
+  as_tibble() |>
+  select(AddID2, County, Municipality, Neighborhood)
 
-adds_hooded <- rbind(hooded1, hooded2) |>
-  inner_join(adds, multiple = "all")
+hooded_all <- filter(cinci, count > 1) |>
+  filter(Neighborhood == "College Hill") |>
+  as_tibble() |>
+  select(AddID2, County, Municipality, Neighborhood) |>
+  rbind(hooded1) |>
+  rbind(hooded2) |>
+  inner_join(select(adds, pat_id, add_line_1, AddID2), multiple = "all")
 
-registry2 <- inner_join(registry, adds_hooded, multiple = "all") |>
-  mutate(
-    Registry = ifelse(
-      str_detect(registry_name, "ASTHMA"), 
-      "Asthma_Registry", 
-      "Diabetes_Registry"
-      )
-    ) |>
-  group_by(State, County, Municipality, Neighborhood, Registry) |>
+registry_totals <- registry |>
+  mutate(Age = as.numeric(today()-birth_date)/365.25) |>
+  filter(Age <= 18) |>
+  inner_join(hooded_all, multiple = "all") |>
+  distinct(pat_id, registry_name, County, Municipality, Neighborhood) |>
+  group_by(County, Municipality, Neighborhood, registry_name) |>
   summarise(Patients = n()) |>
+  separate_wider_delim(
+    cols = registry_name,
+    names = c("x", "Disease", "y"),
+    delim = " "
+  ) |>
+  mutate(
+    Disease = str_to_title(Disease),
+    Disease = paste(Disease, "Registry", sep = "_")
+  ) |>
   pivot_wider(
-    id_cols = c(State, County, Municipality, Neighborhood),
-    names_from = Registry,
-    values_from = Patients
-  ) |>
-  mutate(Diabetes_Registry = coalesce(Diabetes_Registry, 0))
+    id_cols = c(County, Municipality, Neighborhood),
+    names_from = Disease,
+    values_from = Patients,
+    values_fill = 0
+  )
 
-admits2 <- admits |>
-  inner_join(select(adds_hooded, State:pat_id, contact_date)) |>
-  group_by(State, County, Municipality, Neighborhood) |>
+admit_totals <- inner_join(admits, hooded_all, multiple = "all") |>
+  distinct(
+    pat_id, 
+    pat_enc_csn_id, 
+    County, 
+    Municipality, 
+    Neighborhood,
+    Asthma,
+    Diabetes,
+    MH
+    ) |>
+  group_by(County, Municipality, Neighborhood) |>
   summarise(
-    Asthma_Admissions = sum(Asthma),
-    Diabetes_Admissions = sum(Diabetes),
-    MentalHealth_Admissions = sum(MH)
+    Asthma_Admits = sum(Asthma),
+    Asthma_Admitted = length(unique(pat_id[Asthma == 1])),
+    Diabetes_Admits = sum(Diabetes),
+    Diabetes_Admitted = length(unique(pat_id[Diabetes == 1])),
+    MH_Admits = sum(MH),
+    MH_Admitted = length(unique(pat_id[MH == 1]))
     )
 
-health <- full_join(registry2, admits2) |>
-  mutate(across(Asthma_Registry:MentalHealth_Admissions, \(x) coalesce(x, 0)))
-
-health_city <- filter(health, !is.na(Neighborhood)) |>
-  ungroup() |>
-  summarise(across(Asthma_Registry:MentalHealth_Admissions, sum)) |>
+hospital <- full_join(admit_totals, registry_totals) |>
   mutate(
-    State = "Ohio",
-    County = "Hamilton",
-    Municipality = "Cincinnati",
-    Neighborhood = NA
-  )
-
-health_county <- health |>
-  group_by(State, County) |>
-  summarise(across(Asthma_Registry:MentalHealth_Admissions, sum)) |>
-  mutate(
-    Municipality = NA,
-    Neighborhood = NA
+    across(Asthma_Admits:MH_Admitted, \(x) coalesce(x, 0)),
+    Neighborhood = coalesce(Neighborhood, Municipality)
     )
 
-health_all <- health |>
-  ungroup() |>
-  summarise(across(Asthma_Registry:MentalHealth_Admissions, sum)) |>
-  mutate(
-    Municipality = NA,
-    Neighborhood = NA,
-    State = "All",
-    County = "All"
+cinci_hospital <- filter(hospital, Municipality == "Cincinnati") |>
+  group_by(County, Municipality) |>
+  summarise(across(Asthma_Admits:Diabetes_Registry, sum)) |>
+  mutate(Neighborhood = NA)
+
+children <- filter(
+  oki_muni2, 
+  Group3 %in% c(
+    "Under 5 years",
+    "5 to 9 years",
+    "10 to 14 years",
+    "15 to 17 years"
+    )
   ) |>
-  rbind(health_county) |>
-  rbind(health) |>
-  rbind(health_city)
+  group_by(County, Municipality, Neighborhood) |>
+  summarise(Children = sum(estimate))
 
-all_data <- health_all |>
-  right_join(census) |>
+hospital_children <- rbind(hospital, cinci_hospital) |>
+  inner_join(children) |>
+  pivot_longer(
+    cols = Asthma_Admits:Diabetes_Registry,
+    names_to = "Measure"
+  ) |>
   mutate(
-    Asthma_RegistryRate = Asthma_Registry/Children,
-    Asthma_AdmissionRate = Asthma_Admissions/Children,
-    Diabetes_RegistryRate = Diabetes_Registry/Children,
-    Diabetes_AdmissionRate = Diabetes_Admissions/Children,
-    MentalHealth_AdmissionRate = MentalHealth_Admissions/Children,
-    Tier = case_when(
-      DeprivationIndex >= .6 ~ "Highest",
-      DeprivationIndex >= .475 ~ "Higher",
-      DeprivationIndex >= .35 ~ "Medium",
-      DeprivationIndex >= .225 ~ "Lower",
-      TRUE ~ "Lowest"
-    ),
-    Tier = factor(
-      Tier, 
-      levels = c("Lowest", "Lower", "Medium", "Higher", "Highest")
-    ),
-    Level = case_when(
-      Neighborhood != "All" ~ "Neighborhood",
-      Municipality != "All" ~ "Municipality",
-      County != "All" ~ "County",
-      TRUE ~ "All"
-    ),
-    Label = case_when(
-      Neighborhood != "All" ~ Neighborhood,
-      Municipality != "All" ~ Municipality,
-      TRUE ~ County
-    ),
-    across(
-      Asthma_RegistryRate:MentalHealth_AdmissionRate, 
-      \(x) ifelse(is.infinite(x), 0, x)
-      ),
-    across(
-      Asthma_RegistryRate:MentalHealth_AdmissionRate, 
-      \(x) ifelse(is.nan(x), 0, x)
-    ),
+    Rate = value*100/Children,
+    Rate = ifelse(is.infinite(Rate), NA, Rate)
+    ) |>
+  separate_wider_delim(
+    Measure,
+    delim = "_",
+    names = c("Condition", "Measure")
   )
+
+hospital_means <- ungroup(hospital_children) |>
+  filter(Municipality != "Cincinnati" | !is.na(Neighborhood)) |>
+  group_by(Condition, Measure) |>
+  summarise(value = sum(value, na.rm = TRUE)) |>
+  cross_join(
+    filter(children, Municipality != "Cincinnati" | !is.na(Neighborhood)) |> 
+      ungroup() |> 
+      summarise(Children = sum(Children))
+    ) |>
+  mutate(Mean = 100*value/Children) |>
+  select(Condition, Measure, Mean)
+  
+hospital_rates <- ungroup(hospital_children) |>
+  filter(Municipality != "Cincinnati" | !is.na(Neighborhood)) |>
+  group_by(Condition, Measure) |>
+  summarise(
+    Min = min(Rate, na.rm = TRUE),
+    Max = max(Rate, na.rm = TRUE)
+  ) |>
+  inner_join(hospital_means)
+
+hospital_all <- inner_join(hospital_children, hospital_rates) |>
+  mutate(
+    Scale = (Rate-Min)/Max,
+    Textloc = ifelse(Rate > 100, Rate-3, Rate+3)
+    ) |>
+  inner_join(areas)
+
+asthma_graph <- function(k){
+  x <- filter(hospital_all, HoodID == k) |>
+    filter(Condition == "Asthma") |>
+    mutate(
+      Measure = factor(
+        Measure, 
+        levels = c("Registry", "Admits", "Admitted")
+      )
+    )
+  
+  ggplot(x, aes(x = Measure, y = Rate, fill = Scale)) +
+    geom_bar(stat = "identity", color = "black") +
+    labs(x = NULL, y = "Per 100 children", title = unique(x$Neighborhood)) +
+    scale_y_continuous(
+      limits = c(0, 111),
+      breaks = seq(0, 110, 10)
+    ) +
+    theme_minimal() +
+    guides(fill = "none") +
+    theme(plot.title = element_text(hjust = .5)) + 
+    geom_text(aes(label = round(Rate, 1), y = Textloc), size = 4) +
+    geom_text(
+      aes(
+        label = ifelse(value > 0, paste("n", value, sep = " = "), ""), 
+        y = ifelse(Rate > 100, Textloc-5, Textloc+5)
+        ),
+      size = 4
+    ) +
+    scale_fill_gradient2(
+      limits = c(0, 1), 
+      high = cchmcdarkpurple, 
+      low = cchmcdarkgreen, 
+      mid = cchmclightblue,
+      midpoint = .6
+    ) +
+    scale_x_discrete(labels = c("Registry", "Admits", "Patients\nAdmitted"))
+}
+
+asthma_popup_muni <- lapply((muninums), function(k) {
+ asthma_graph(k)
+})
+
+asthma_popup_hood <- lapply((hoodnums), function(k) {
+  asthma_graph(k)
+})
+
+diabetes_graph <- function(k){
+  x <- filter(hospital_all, HoodID == k) |>
+    filter(Condition == "Diabetes") |>
+    mutate(
+      Measure = factor(
+        Measure, 
+        levels = c("Registry", "Admits", "Admitted")
+      )
+    )
+  
+  ggplot(x, aes(x = Measure, y = Rate, fill = Scale)) +
+    geom_bar(stat = "identity", color = "black") +
+    labs(x = NULL, y = "Per 100 children", title = unique(x$Neighborhood)) +
+    scale_y_continuous(
+      limits = c(0, 7),
+      breaks = 0:7
+    ) +
+    theme_minimal() +
+    guides(fill = "none") +
+    theme(plot.title = element_text(hjust = .5)) + 
+    geom_text(aes(label = round(Rate, 2), y = Textloc-2.8), size = 4) +
+    geom_text(
+      aes(
+        label = ifelse(value > 0, paste("n", value, sep = " = "), ""), 
+        y = ifelse(Rate > 6, Textloc-3.5, Textloc-2.5)
+      ),
+      size = 4
+    ) +
+    scale_fill_gradient2(
+      limits = c(-1, 1), 
+      high = cchmcdarkpurple, 
+      low = cchmcdarkgreen, 
+      mid = cchmclightblue
+    ) +
+    scale_x_discrete(labels = c("Registry", "Admits", "Patients\nAdmitted"))
+}
+
+diabetes_popup_muni <- lapply((muninums), function(k) {
+  diabetes_graph(k)
+})
+
+diabetes_popup_hood <- lapply((hoodnums), function(k) {
+  diabetes_graph(k)
+})
+
+mh_graph <- function(k){
+  x <- filter(hospital_all, HoodID == k) |>
+    filter(Condition == "MH") |>
+    mutate(Measure = factor(Measure, levels = c("Admits", "Admitted")))
+  
+  ggplot(x, aes(x = Measure, y = Rate, fill = Scale)) +
+    geom_bar(stat = "identity", color = "black") +
+    labs(x = NULL, y = "Per 100 children", title = unique(x$Neighborhood)) +
+    scale_y_continuous(
+      limits = c(0, 7),
+      breaks = seq(0, 7, 1)
+    ) +
+    theme_minimal() +
+    guides(fill = "none") +
+    theme(plot.title = element_text(hjust = .5)) + 
+    geom_text(aes(label = round(Rate, 2), y = Textloc-2.8), size = 4) +
+    geom_text(
+      aes(
+        label = ifelse(value > 0, paste("n", value, sep = " = "), ""), 
+        y = ifelse(Rate > 6, Textloc-3, Textloc-2.5)
+      ),
+      size = 4
+    ) +
+    scale_fill_gradient2(
+      limits = c(-1, 1), 
+      high = cchmcdarkpurple, 
+      low = cchmcdarkgreen, 
+      mid = cchmclightblue
+    ) +
+    scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted"))
+}
+
+mh_popup_muni <- lapply((muninums), function(k) {
+  mh_graph(k)
+})
+
+mh_popup_hood <- lapply((hoodnums), function(k) {
+  mh_graph(k)
+})
 
 pharms <- dbGetQuery(con, "
   SELECT pharmacy_id
@@ -1477,450 +1759,42 @@ points_all2 <- points_all |>
   inner_join(points_all, multiple = "all") |>
   unique()
 
-points <- oki_cs |>
-  st_as_sf() |>
-  distinct(Municipality, County, State, geometry) |>
+points <- muni_lines |>
   st_join(points_all2, left = FALSE)
 
 cinci_points <- filter(
   points, 
-  Municipality %in% c("Cincinnati", "Norwood") | Type == "School"
+  Municipality %in% c("Cincinnati", "Norwood", "St. Bernard", "Elmwood Place") | 
+    Type == "School"
   )
 
-benchmarks <- all_data |>
+cinci_map_lines <- hamco_bg |>
+  mutate(Allocation = ifelse(Neighborhood == "California", 1, Allocation)) |>
+  group_by(GEOID) |>
+  filter(Allocation == max(Allocation)) |>
   ungroup() |>
-  select(
-    Municipality:County, 
-    ends_with("Rate"), 
-    Level, 
-    MedianHHIncome, 
-    DeprivationIndex
-  )
-
-bench_min <- benchmarks |>
-  filter(Level != "All") |>
-  select(
-    Level, 
-    WhiteRate:MentalHealth_AdmissionRate,  
-    MedianHHIncome, 
-    DeprivationIndex
-  ) |>
-  group_by(Level) |>
-  summarise(
-    across(WhiteRate:DeprivationIndex, \(x) min(x, na.rm = TRUE))
-    ) |>
-  pivot_longer(
-    cols = WhiteRate:DeprivationIndex,
-    names_to = "variable",
-    values_to = "Minimum"
-  )
-
-bench_max <- benchmarks |>
-  filter(Level != "All") |>
-  select(
-    Level, 
-    WhiteRate:MentalHealth_AdmissionRate,  
-    MedianHHIncome, 
-    DeprivationIndex
-    ) |>
-  group_by(Level) |>
-  summarise(
-    across(WhiteRate:DeprivationIndex, \(x) max(x, na.rm = TRUE))
-    ) |>
-  pivot_longer(
-    cols = WhiteRate:DeprivationIndex,
-    names_to = "variable",
-    values_to = "Maximum"
-  )
-
-bench_mean <- benchmarks |>
-  ungroup() |>
-  filter(
-    County == "All" | (Municipality == "Cincinnati" & is.na(Neighborhood))
-  ) |>
-  mutate(Level = ifelse(Level == "Municipality", "Neighborhood", "County")) |>
-  select(
-    Level, 
-    WhiteRate:MentalHealth_AdmissionRate, 
-    MedianHHIncome, 
-    DeprivationIndex
-    ) |>
-  pivot_longer(
-    cols = WhiteRate:DeprivationIndex,
-    names_to = "variable",
-    values_to = "Mean"
-  )
-
-benchmarks_all <- filter(bench_mean, Level == "County") |>
-  mutate(Level = "Municipality") |>
-  rbind(bench_mean) |>
-  inner_join(bench_max) |>
-  inner_join(bench_min)
-
-rates <- filter(all_data, County != "All") |>
-  select(
-    Level,
-    County,
-    Municipality,
-    Neighborhood, 
-    ends_with("Rate"), 
-    MedianHHIncome, 
-    DeprivationIndex
-  ) |>
-  pivot_longer(
-    cols = WhiteRate:DeprivationIndex,
-    names_to = "variable"
-  ) |>
-  inner_join(benchmarks_all) |>
-  mutate(
-    Shade = ifelse(
-      value > Mean, 
-      (value-Mean)/(Maximum-Mean), 
-      (value-Mean)/(Mean-Minimum)
-    ),
-    Shade = ifelse(is.infinite(Shade), NA, Shade),
-    Scale = ifelse(
-      variable %in% c(
-        "WhiteRate", 
-        "BlackRate", 
-        "HispanicRate", 
-        "ChildRate", 
-        "ChildHHRate",
-        "OtherLanguageRate",
-        "LimitedEnglishRate",
-        "Asthma_RegistryRate",
-        "Asthma_AdmissionRate",
-        "Diabetes_RegistryRate",
-        "Diabates_AdmissionRate",
-        "MentalHealth_AdmissionRate"
-      ), 
-      value,
-      (value-Minimum)/(Maximum-Minimum)
-    ),
-    Textloc = ifelse(Scale > .9, Scale - .025, Scale + .04)
-  )
-
-inner_subs <- filter(
-  rates, 
-  Municipality %in% c("Norwood", "St. Bernard", "Elmwood Place")
-  ) |>
-  select(County:value) |>
-  mutate(Level = "Neighborhood", Neighborhood = Municipality) |>
-  inner_join(benchmarks_all) |>
-  mutate(
-    Shade = ifelse(
-      value > Mean, 
-      (value-Mean)/(Maximum-Mean), 
-      (value-Mean)/(Mean-Minimum)
-    ),
-    Scale = ifelse(
-      variable %in% c(
-        "WhiteRate", 
-        "BlackRate", 
-        "HispanicRate", 
-        "ChildRate", 
-        "ChildHHRate",
-        "OtherLanguageRate",
-        "LimitedEnglishRate",
-        "AsthmaRegistryRate",
-        "AsthmaAdmissionRate",
-        "Diabetes_RegistryRate",
-        "Diabates_AdmissionRate",
-        "MentalHealth_AdmissionRate"
-      ),
-      value,
-      (value-Minimum)/(Maximum-Minimum)
-    ),
-    Textloc = ifelse(Scale > .9, Scale - .025, Scale + .04)
-  )
-
-rates <- rbind(rates, inner_subs) |>
-  mutate(variable = str_remove(variable, "Rate"))
-
-areas <- distinct(rates, Level, County, Municipality, Neighborhood) |>
-  mutate(
-    Label = case_when(
-      !is.na(Neighborhood) ~ Neighborhood,
-      !is.na(Municipality) ~ Municipality,
-      TRUE ~ County
-    )
-  ) |>
-  inner_join(select(all_data, County, Label, Tier)) |>
-  mutate(
-    Label = ifelse(
-      is.na(Neighborhood) & is.na(Municipality),
-      paste(Label, "County", sep = " "),
-      Label
-    )
-  ) |>
-  arrange(Level, Label) |>
-  ungroup() |>
-  mutate(geoid = row_number())
-
-hoods <- areas$geoid[areas$Level == "Neighborhood"]
-munis <- areas$geoid[areas$Level == "Municipality"]
-counties <- areas$geoid[areas$Level == "County"]
-
-demo_graph <- function(i) {
-  x <- filter(
-    rates,
-    variable %in% c(
-      "White", 
-      "Black", 
-      "Hispanic", 
-      "Child", 
-      "ChildHH",
-      "OtherLanguage",
-      "LimitedEnglish"
-    )
-  ) |>
-    inner_join(areas[i,]) |>
-    mutate(
-      variable = factor(
-        variable, 
-        levels = c(
-          "White", 
-          "Black", 
-          "Hispanic", 
-          "Child", 
-          "ChildHH", 
-          "OtherLanguage", 
-          "LimitedEnglish"
-        )
-      )
-    )
-  
-  y <- ggplot(x, aes(x = variable, y = Scale, fill = Shade)) +
-    geom_bar(stat = "identity", color = "black") +
-    labs(x = NULL, y = "%", title = unique(x$Label)) +
-    scale_y_continuous(
-      limits = c(0, 1),
-      breaks = seq(0, 1, .2),
-      labels = seq(0, 100, 20)
-    ) +
-    scale_x_discrete(
-      labels = c(
-        "White",
-        "Black",
-        "Hispanic",
-        "Children",
-        "Households\nwith Children",
-        "Language other\nthan English",
-        "Limited\nEnglish"
-      )
-    ) +
-    theme_minimal() +
-    guides(fill = "none") +
-    theme(plot.title = element_text(hjust = .5)) + 
-    geom_text(
-      aes(label = paste0(round(value*100, 1), "%"), y = Textloc), 
-      size = 4
-    ) +
-    scale_fill_gradient2(
-      limits = c(-1, 1), 
-      high = cchmcdarkpurple, 
-      low = cchmcdarkgreen, 
-      mid = cchmclightblue
-    )
-  y
-  return(y)
-} 
-
-hood_demo_popups <- lapply(hoods, function(k) {
-  demo_graph(i = k)
-  })
-
-muni_demo_popups <- lapply(munis, function(k){
-  demo_graph(i = k)
-  })
-
-county_demo_popups <- lapply(counties, function(k){
-  demo_graph(i = k)
-  })
-
-di_graph <- function(i) {
-  x <- filter(
-    rates,
-    variable %in% c(
-      "Uninsured", 
-      "Assistance", 
-      "HighSchool", 
-      "Poverty", 
-      "Vacancy", 
-      "MedianHHIncome",
-      "DeprivationIndex"
-    )
-  ) |>
-    inner_join(areas[i,]) |>
-    mutate(
-      variable = factor(
-        variable,
-        levels = c(
-          "DeprivationIndex",
-          "Poverty",
-          "Assistance",
-          "MedianHHIncome",
-          "Uninsured",
-          "HighSchool",
-          "Vacancy"
-        )
-      ),
-      label = case_when(
-        variable == "DeprivationIndex" ~ as.character(round(value, 3)),
-        variable == "MedianHHIncome" ~ 
-          paste0("$", format(round(value), big.mark = ",", trim = TRUE)),
-        TRUE ~ paste0(as.character(round(value*100, 1)), "%")
-      ),
-      Shade = ifelse(
-        variable %in% c("MedianHHIncome", "HighSchool"), 
-        Shade * -1, 
-        Shade
-      )
-    )
-  
-  y <- ggplot(x, aes(x = variable, y = Scale, fill = Shade)) +
-    geom_bar(stat = "identity") +
-    scale_fill_gradient2(
-      limits = c(-1, 1), 
-      high = cchmcdarkpurple, 
-      low = cchmcdarkgreen, 
-      mid = cchmclightblue
-    ) +
-    labs(x = NULL, y = NULL, title = unique(x$Label), fill = NULL) +
-    scale_y_continuous(labels = NULL, limits = c(0, 1)) +
-    scale_x_discrete(
-      labels = c(
-        "Deprivation\nIndex",
-        "Poverty\nRate",
-        "On Public\nAssistance",
-        "Median\nHousehold\nIncome",
-        "No Health\nInsurance",
-        "High School\nGraduation",
-        "Housing\nVacancies"
-      )
-    ) + 
-    guides(fill = "none") + 
-    theme_minimal() +
-    theme(plot.title = element_text(hjust = .5)) +
-    geom_text(aes(label = label, y = Textloc), size = 4)
-  y
-  return(y)
-}
-
-hood_di_popups <- lapply(hoods, function(k) {
-  di_graph(i = k)
-})
-
-muni_di_popups <- lapply(munis, function(k){
-  di_graph(i = k)
-})
-
-county_di_popups <- lapply(counties, function(k){
-  di_graph(i = k)
-})
-
-health_graph <- function(i) {
-  x <- rates |>
-    filter(
-      variable %in% c(
-        "Asthma_Registry", 
-        "Asthma_Admission",
-        "Diabetes_Registry",
-        "Diabetes_Admission",
-        "MentalHealth_Admission"
-        )
-      ) |>
-    inner_join(areas[i,]) |>
-    inner_join(
-      select(
-        all_data, 
-        County, 
-        Municipality, 
-        Asthma_Registry:MentalHealth_Admissions, 
-        Children, 
-        Label
-      )
-    ) |>
-    separate_wider_delim(
-      variable,
-      delim = "_",
-      names = c("Condition", "Measure")
-    ) |>
-    mutate(
-      Measure = factor(Measure, levels = c("Registry", "Admission")),
-      Scale = ifelse(value > .45, .45, value),
-      Textloc = ifelse(value > .45, Scale/2, Textloc)
-      )
-  
-  ggplot(x, aes(x = Measure, y = Scale, fill = Shade)) +
-    geom_bar(stat = "identity") +
-    facet_grid(Condition ~.) +
-    labs(x = NULL, y = "Per 100 children", title = unique(x$Label), fill = NULL) +
-    scale_y_continuous(
-      limits = c(0, .45), 
-      breaks = seq(0, .4, .10), 
-      labels = seq(0, 40, 10)
-    ) +
-    scale_fill_gradient2(
-      limits = c(-1, 1), 
-      high = cchmcdarkpurple, 
-      low = cchmcdarkgreen, 
-      mid = cchmclightblue
-    ) +
-    guides(fill = "none") +
-    theme_minimal() +
-    theme(plot.title = element_text(hjust = .5)) +
-    geom_text(aes(label = round(value*100, 1), y = Textloc), size = 4) +
-    annotate(
-      "text", 
-      x = 2, 
-      y = x$Textloc[x$Condition == "Asthma" & x$Measure == "Admission"] + .2,
-      label = paste0("n = ", mean(x$Asthma_Registry))
-    ) +
-    annotate(
-      "text", 
-      x = 2, 
-      y = x$Textloc[x$variable == "AsthmaAdmission"] + .03,
-      label = paste0("n = ", mean(x$Asthma_Admissions))
-    ) +
-    annotate(
-      "text",
-      x = 1.5,
-      y = .6,
-      label = paste0("Children = ", format(mean(x$Children), big.mark = ","))
-    )
-  y
-  return(y)
-}
-
-hood_health_popups <- lapply(hoods, function(k){
-  health_graph(i = k)
-})
-
-muni_health_popups <- lapply(munis, function(k){
-  health_graph(i = k)
-})
-
-county_health_popups <- lapply(counties, function(k){
-  health_graph(i = k)
-})
-
-hood_lines <- hamco_bg |>
-  inner_join(allocations, multiple = "all") |>
   filter(
     Municipality %in% c("Cincinnati", "Norwood", "St. Bernard", "Elmwood Place")
-  ) |>
+    ) |>
   group_by(Neighborhood) |>
   summarise(geometry = st_union(geometry)) |>
-  #rename(Area = Neighborhood) |>
+  inner_join(di_rates |> 
+               mutate(Neighborhood = coalesce(Neighborhood, Municipality))
+             ) |>
   mutate(
-    State = "Ohio",
-    County = "Hamilton",
-    Centroid = st_centroid(geometry),
-    Level = "Neighborhood"
-  ) |>
-  inner_join(areas) |>
-  arrange(geoid)
+    Tier = case_when(
+      value >= .6 ~ "Highest",
+      value >= .475 ~ "Higher",
+      value >= .35 ~ "Medium",
+      value >= .225 ~ "Lower",
+      TRUE ~ "Lowest"
+      ),
+    Tier = factor(
+      Tier, 
+      levels = c("Lowest", "Lower", "Medium", "Higher", "Highest")
+    ),
+    Centroid = st_centroid(geometry)
+  ) 
 
 pal <- colorFactor(
   c(
@@ -1930,17 +1804,7 @@ pal <- colorFactor(
     cchmclightpurple, 
     cchmcdarkpurple
     ), 
-  domain = all_data$Tier
-)
-
-cinci_icons <- icons(
-  iconUrl = ifelse(
-    cinci_points$Type == "School", 
-    "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png",
-    "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-yellow.png"
-    ),
-  iconWidth = 20,
-  iconHeight = 30
+  domain = cinci_map_lines$Tier
 )
 
 muni_icons <- icons(
@@ -1953,10 +1817,10 @@ muni_icons <- icons(
   iconHeight = 30
 )
 
-citymap <- leaflet() |>
+city_map <- leaflet() |>
   addTiles() |>
   addPolygons(
-    data = hood_lines,
+    data = cinci_map_lines,
     stroke = TRUE,
     weight = 1,
     smoothFactor = .5,
@@ -1966,205 +1830,106 @@ citymap <- leaflet() |>
   ) |>
   addLegendFactor(
     pal = pal,
-    values = hood_lines$Tier,
+    values = cinci_map_lines$Tier,
     title = "Deprivation Index",
-    position = "bottomleft"
+    position = "topleft"
   ) |>
   addLayersControl(
     baseGroups = c(
       "Demographics", 
       "Deprivation indicators",
-      "Health indicators",
-      "Schools and Pharmacies"
+      "Age and gender",
+      "Household types",
+      "Geographic mobility",
+      "Asthma",
+      "Diabetes",
+      "Mental health",
+      "Schools and pharmacies"
     ),
-    position = "bottomright",
+    position = "bottomleft",
     options = layersControlOptions(collapsed = FALSE)
   ) |>
   addCircleMarkers(
-    data = hood_lines$Centroid,
+    data = cinci_map_lines$Centroid,
     color = cchmcpink,
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
-    popup = popupGraph(hood_demo_popups, height = 300, width = 700),
+    popup = popupGraph(demo_popup_hood, height = 300, width = 700),
     group = "Demographics"
   ) |>
   addCircleMarkers(
-    data = hood_lines$Centroid,
+    data = cinci_map_lines$Centroid,
     color = cchmcpink,
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
-    popup = popupGraph(hood_di_popups, height = 300, width = 700),
+    popup = popupGraph(di_popup_hood, height = 300, width = 700),
     group = "Deprivation indicators"
   ) |>
   addCircleMarkers(
-    data = hood_lines$Centroid,
+    data = cinci_map_lines$Centroid,
     color = cchmcpink,
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
-    popup = popupGraph(hood_health_popups, height = 300, width = 700),
-    group = "Health indicators"
+    popup = popupGraph(pyr_popup_hood, height = 300, width = 700),
+    group = "Age and gender"
+  ) |>
+  addCircleMarkers(
+    data = cinci_map_lines$Centroid,
+    color = cchmcpink,
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
+    popup = popupGraph(hh_popup_hood, height = 300, width = 700),
+    group = "Household types"
+  ) |>
+  addCircleMarkers(
+    data = cinci_map_lines$Centroid,
+    color = cchmcpink,
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
+    popup = popupGraph(mobile_popup_hood, height = 300, width = 700),
+    group = "Geographic mobility"
+  ) |>
+  addCircleMarkers(
+    data = cinci_map_lines$Centroid,
+    color = cchmcpink,
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
+    popup = popupGraph(asthma_popup_hood, height = 300, width = 700),
+    group = "Asthma"
+  ) |>
+  addCircleMarkers(
+    data = cinci_map_lines$Centroid,
+    color = cchmcpink,
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
+    popup = popupGraph(diabetes_popup_hood, height = 300, width = 700),
+    group = "Diabetes"
+  ) |>
+  addCircleMarkers(
+    data = cinci_map_lines$Centroid,
+    color = cchmcpink,
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
+    popup = popupGraph(mh_popup_hood, height = 300, width = 700),
+    group = "Mental health"
   ) |>
   addMarkers(
     data = cinci_points,
     ~long,
     ~lat,
-    icon = cinci_icons,
-    popup = ~Name,
-    group = "Schools and Pharmacies"
-  ) 
-
-#saveWidget(citymap, "city map.html")
-
-muni_lines <- oki_cs |>
-  distinct(Municipality, County, State, geometry)|>
-  st_as_sf() |>
-  group_by(Municipality, County, State) |>
-  summarise(geometry = st_union(geometry)) |>
-  mutate(
-    Centroid = st_centroid(geometry),
-    Neighborhood = "All"
-  ) |>
-  inner_join(areas |> mutate(Neighborhood = coalesce(Neighborhood, "All"))) |>
-  arrange(geoid) 
-
-muni_map <- leaflet() |>
-  addTiles() |>
-  addPolygons(
-    data = muni_lines,
-    stroke = TRUE,
-    weight = 1,
-    smoothFactor = .5,
-    opacity = 1,
-    fillOpacity = .7,
-    fillColor = ~pal(Tier)
-  ) |>
-  addLegendFactor(
-    pal = pal,
-    values = hood_lines$Tier,
-    title = "Deprivation Index",
-    position = "bottomleft"
-  ) |>
-  addLayersControl(
-    baseGroups = c(
-      "Demographics", 
-      "Deprivation indicators",
-      "Health indicators",
-      "Schools and Pharmacies"
-    ),
-    position = "bottomright",
-    options = layersControlOptions(collapsed = FALSE)
-  ) |>
-  addCircleMarkers(
-    data = muni_lines$Centroid,
-    color = cchmcpink,
-    stroke = FALSE,
-    fillOpacity = 1,
-    radius = 4,
-    popup = popupGraph(muni_demo_popups, height = 300, width = 700),
-    group = "Demographics"
-  ) |>
-  addCircleMarkers(
-    data = muni_lines$Centroid,
-    color = cchmcpink,
-    stroke = FALSE,
-    fillOpacity = 1,
-    radius = 4,
-    popup = popupGraph(muni_di_popups, height = 300, width = 700),
-    group = "Deprivation indicators"
-  ) |>
-  addCircleMarkers(
-    data = muni_lines$Centroid,
-    color = cchmcpink,
-    stroke = FALSE,
-    fillOpacity = 1,
-    radius = 4,
-    popup = popupGraph(muni_health_popups, height = 300, width = 700),
-    group = "Health indicators"
-  ) |>
-  addMarkers(
-    data = points,
-    ~long,
-    ~lat,
     icon = muni_icons,
     popup = ~Name,
-    group = "Schools and Pharmacies"
+    group = "Schools and pharmacies"
   ) 
 
-#saveWidget(muni_map, "muni map.html")
-
-county_lines <- oki_county |>
-  distinct(County, State, geometry) |>
-  st_as_sf() |>
-  mutate(Centroid = st_centroid(geometry)) |> 
-  inner_join(filter(areas, Level == "County")) |>
-  arrange(geoid)
-
-county_map <- leaflet() |>
-  addTiles() |>
-  addPolygons(
-    data = county_lines,
-    stroke = TRUE,
-    weight = 1,
-    smoothFactor = .5,
-    opacity = 1,
-    fillOpacity = .7,
-    fillColor = ~pal(Tier)
-  ) |>
-  addLegendFactor(
-    pal = pal,
-    values = county_lines$Tier,
-    title = "Deprivation Index",
-    position = "bottomleft"
-  ) |>
-  addLayersControl(
-    baseGroups = c(
-      "Demographics", 
-      "Deprivation indicators",
-      "Health indicators",
-      "Schools and Pharmacies"
-    ),
-    position = "bottomright",
-    options = layersControlOptions(collapsed = FALSE)
-  ) |>
-  addCircleMarkers(
-    data = county_lines$Centroid,
-    color = cchmcpink,
-    stroke = FALSE,
-    fillOpacity = 1,
-    radius = 4,
-    popup = popupGraph(county_demo_popups, height = 300, width = 700),
-    group = "Demographics"
-  ) |>
-  addCircleMarkers(
-    data = county_lines$Centroid,
-    color = cchmcpink,
-    stroke = FALSE,
-    fillOpacity = 1,
-    radius = 4,
-    popup = popupGraph(county_di_popups, height = 300, width = 700),
-    group = "Deprivation indicators"
-  ) |>
-  addCircleMarkers(
-    data = county_lines$Centroid,
-    color = cchmcpink,
-    stroke = FALSE,
-    fillOpacity = 1,
-    radius = 4,
-    popup = popupGraph(county_health_popups, height = 300, width = 700),
-    group = "Health indicators"
-  ) |>
-  addMarkers(
-    data = points,
-    ~long,
-    ~lat,
-    icon = muni_icons,
-    popup = ~Name,
-    group = "Schools and Pharmacies"
-  ) 
-
-#saveWidget(county_map, "county map.html")
+saveWidget(city_map, "city map.html")
 
 
