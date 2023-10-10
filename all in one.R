@@ -1,3 +1,4 @@
+library(cincy)
 library(DBI)
 library(htmlwidgets)
 library(leaflegend)
@@ -230,6 +231,7 @@ lang <- filter(hood_muni, str_detect(concept, "LANGUAGE")) |>
     PopOver5, 
     TotalOtherThanEnglish:RateNotWell
   )
+
 benchmarks <- function(k){
   x <- filter(k, Municipality == Neighborhood) |>
     ungroup()
@@ -791,8 +793,8 @@ di_graph <- function(k){
     geom_text(aes(label = Label, y = Textloc), size = 4) +
     scale_fill_gradient2(
       limits = c(0, 1), 
-      high = cchmcdarkpurple, 
-      low = cchmcdarkgreen,
+      high = cchmcdarkgreen, 
+      low = cchmcdarkpurple,
       mid = cchmclightblue,
       midpoint = .5,
       labels = c("Worst", "", "Average", "", "Best")
@@ -1016,7 +1018,7 @@ mobile_graph <- function(k){
   
   ggplot(x, aes(x = name, y = value, fill = Shade)) +
     geom_bar(stat = "identity", color = "black") +
-    labs(x = NULL, y = "%", title = unique(x$Neighborhood)) +
+    labs(x = NULL, y = "%", title = unique(x$Neighborhood), fill = NULL) +
     scale_y_continuous(
       limits = c(0, 1),
       breaks = seq(0, 1, .2),
@@ -1025,13 +1027,12 @@ mobile_graph <- function(k){
     scale_x_discrete(
       labels = c(
         "Same Home",
-        "Same City",
+        "Same metro area",
         "Elsewhere\nin U.S.",
         "Other Country"
       )
     ) +
     theme_minimal() +
-    guides(fill = "none") +
     theme(plot.title = element_text(hjust = .5)) + 
     geom_text(
       aes(label = paste0(round(value*100, 1), "%"), y = Textloc), 
@@ -1041,7 +1042,8 @@ mobile_graph <- function(k){
       limits = c(-1, 1), 
       high = cchmcdarkpurple, 
       low = cchmcdarkgreen, 
-      mid = cchmclightblue
+      mid = cchmclightblue,
+      labels = c("Lowest", "", "Average", "", "Highest")
     )
 }
 
@@ -1293,8 +1295,6 @@ muni_lines <- oki_muni |>
   group_by(Municipality, County) |>
   summarise(geometry = st_union(geometry)) |>
   st_as_sf()
-
-library(cincy)
 
 hood_lines <- neigh_sna |>
   rename(Neighborhood = neighborhood) |>
@@ -1941,6 +1941,7 @@ centroids <- st_coordinates(map_lines$Centroid) |>
       Neighborhood == "Sycamore Township" ~ 39.20386,
       Neighborhood == "Columbia Township" ~ 39.192,
       Neighborhood == "East End" ~ 39.122,
+      Neighborhood == "Riverside" ~ 39.07735,
       TRUE ~ Y
     ),
     HoodID = map_lines$HoodID
@@ -2008,7 +2009,8 @@ city_map <- leaflet() |>
       "Mental health",
       "Schools and pharmacies"
     ),
-    position = "bottomleft"
+    position = "bottomleft",
+    options = layersControlOptions(collapsed = FALSE)
   ) |>
   addCircleMarkers(
     data = cinci_map_lines$Centroid,
@@ -2122,7 +2124,8 @@ muni_map <- leaflet() |>
       "Mental health",
       "Schools and pharmacies"
     ),
-    position = "bottomleft"
+    position = "bottomleft",
+    options = layersControlOptions(collapsed = FALSE)
   ) |>
   addCircleMarkers(
     data = muni_map_lines$Centroid,
@@ -2205,4 +2208,4 @@ muni_map <- leaflet() |>
     group = "Schools and pharmacies"
   ) 
 
-saveWidget(city_map, "city map 20231006.html")
+saveWidget(muni_map, "area map 20231006.html")
