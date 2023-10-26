@@ -882,7 +882,6 @@ oki_income <- oki_muni |>
   select(-c(HH, Income)) |>
   rbind(hood_income) |>
   mutate(name = "MedianIncome")
-  
 
 ```
 
@@ -1655,6 +1654,7 @@ admits <- dbGetQuery(con, "
 		AND (a.eff_end_date IS NULL OR r.hosp_admsn_time < a.eff_end_date)
 		AND year(r.hosp_admsn_time) = 2022
 		AND a.state IN ('Ohio', 'Indiana', 'Kentucky')
+		AND a.addr_hx_line1 not like '222 E%'
                      ") |>
   mutate(
     Asthma = ifelse(
@@ -1721,7 +1721,6 @@ admits <- dbGetQuery(con, "
     Asthma = ifelse(Asthma == 1 & AsthmaException == 0, 1, 0),
     county = str_to_title(county)
   )
-
 
 ```
 
@@ -1836,7 +1835,7 @@ for_geocoder <- cleaned_unique |>
   ) |>
   select(AddID2, address) |>
   rename(ID = AddID2)
-#write_csv(for_geocoder, "for_degauss.csv")
+write_csv(for_geocoder, "for_degauss.csv")
 #docker run --rm -v ${PWD}:/tmp ghcr.io/degauss-org/geocoder:3.0.2 for_degauss.csv#<1>
 ```
 
@@ -1863,9 +1862,6 @@ muni_lines <- oki_muni |>
   summarise(geometry = st_union(geometry)) |>
   st_as_sf()
   
-
-
-
 ```
 
 Cincinnati neighborhood boundaries are obtained using the [cincy](https://geomarker.io/cincy/) library. The Statistical Neighborhood Approximation data set it used because we are using Census data, and these boundaries are drawn to coincide with Census block groups.
@@ -1991,7 +1987,9 @@ admit_totals <- inner_join(admits, hooded_all, multiple = "all") |>
     Diabetes_Admits = sum(Diabetes),
     Diabetes_Admitted = length(unique(pat_id[Diabetes == 1])),
     MH_Admits = sum(MH),
-    MH_Admitted = length(unique(pat_id[MH == 1]))
+    MH_Admitted = length(unique(pat_id[MH == 1])),
+    Total_Admits = n(),
+    Total_Admitted = length(unique(pat_id))
     )
 
 hospital <- full_join(admit_totals, registry_totals) |>
@@ -2124,14 +2122,16 @@ asthma_graph <- function(k){
       size = 4
     ) +
     scale_fill_gradient2(
-      limits = c(-1.71, 34.8), 
+      limits = c(
+        min(hospital_all$Shade[hospital_all$Condition == "Asthma"], na.rm = TRUE),
+        max(hospital_all$Shade[hospital_all$Condition == "Asthma"], na.rm = TRUE)
+        ), 
       high = cchmcdarkpurple, 
       low = cchmcdarkgreen, 
       mid = cchmclightblue,
-      midpoint = .575,
-      labels = c("Lowest", "", "", "Highest")
+      labels = c("Lowest", rep("", 3), "Highest")
     ) +
-    scale_x_discrete(labels = c("Registry", "Admits", "Patients\nAdmitted"))
+    scale_x_discrete(labels = c("Registry", "Admissions", "Patients\nAdmitted"))
   }else{
   ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
     geom_bar(stat = "identity", color = "black") +
@@ -2148,14 +2148,6 @@ asthma_graph <- function(k){
     theme_minimal() +
     theme(plot.title = element_text(hjust = .5)) + 
     annotate("text", label = "NA", x = 1:3, y = 50) +
-    scale_fill_gradient2(
-      limits = c(-1.71, 34.8), 
-      high = cchmcdarkpurple, 
-      low = cchmcdarkgreen, 
-      mid = cchmclightblue,
-      midpoint = .575,
-      labels = c("Lowest", "", "", "Highest")
-    ) +
     scale_x_discrete(labels = c("Registry", "Admits", "Patients\nAdmitted"))
     }
 }
@@ -2205,14 +2197,16 @@ x <- filter(hospital_all, HoodID == 13) |>
       size = 4
     ) +
     scale_fill_gradient2(
-      limits = c(-1.71, 34.8), 
+      limits = c(
+        min(hospital_all$Shade[hospital_all$Condition == "Asthma"], na.rm = TRUE),
+        max(hospital_all$Shade[hospital_all$Condition == "Asthma"], na.rm = TRUE)
+        ), 
       high = cchmcdarkpurple, 
       low = cchmcdarkgreen, 
       mid = cchmclightblue,
-      midpoint = .575,
-      labels = c("Lowest", "", "", "Highest")
+      labels = c("Lowest", "", "", "", "Highest")
     ) +
-    scale_x_discrete(labels = c("Registry", "Admits", "Patients\nAdmitted"))
+    scale_x_discrete(labels = c("Registry", "Admissions", "Patients\nAdmitted"))
 ```
 
 ## Diabetes
@@ -2254,14 +2248,16 @@ diabetes_graph <- function(k){
       size = 4
     ) +
     scale_fill_gradient2(
-      limits = c(-.762, 127), 
+      limits = c(
+        min(hospital_all$Shade[hospital_all$Condition=="Diabetes"], na.rm = TRUE),
+        max(hospital_all$Shade[hospital_all$Condition=="Diabetes"], na.rm = TRUE)
+        ), 
       high = cchmcdarkpurple, 
       low = cchmcdarkgreen, 
       mid = cchmclightblue,
-      midpoint = .4,
       labels = c("Lowest", rep("", 4), "Highest")
     ) +
-    scale_x_discrete(labels = c("Registry", "Admits", "Patients\nAdmitted"))
+    scale_x_discrete(labels = c("Registry", "Admissions", "Patients\nAdmitted"))
   }else{
     ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
     geom_bar(stat = "identity", color = "black") +
@@ -2278,18 +2274,8 @@ diabetes_graph <- function(k){
     theme_minimal() +
     theme(plot.title = element_text(hjust = .5)) + 
     annotate("text", label = "NA", x = 1:3, y = 3.5) +
-    scale_fill_gradient2(
-      limits = c(-.762, 127), 
-      high = cchmcdarkpurple, 
-      low = cchmcdarkgreen, 
-      mid = cchmclightblue,
-      midpoint = .4,
-      labels = c("Lowest", rep("", 4), "Highest")
-    ) +
     scale_x_discrete(labels = c("Registry", "Admits", "Patients\nAdmitted"))
   }
-  
-  
 }
 
 diabetes_popup_muni <- lapply((muninums), function(k) {
@@ -2362,36 +2348,38 @@ mh_graph <- function(k){
   
   if (max(x$Children) > 0){
     ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
-    geom_bar(stat = "identity", color = "black") +
-    labs(
-      x = NULL, 
-      y = "Per 100 children", 
-      title = unique(x$Neighborhood),
-      fill = NULL
+      geom_bar(stat = "identity", color = "black") +
+      labs(
+        x = NULL, 
+        y = "Per 100 children", 
+        title = unique(x$Neighborhood),
+        fill = NULL
       ) +
-    scale_y_continuous(
-      limits = c(0, 16),
-      breaks = seq(0, 16, 2)
+      scale_y_continuous(
+        limits = c(0, 18),
+        breaks = seq(0, 18, 2)
     ) +
-    theme_minimal() +
-    theme(plot.title = element_text(hjust = .5)) + 
-    geom_text(aes(label = round(Rate, 1), y = Textloc), size = 4) +
-    geom_text(
-      aes(
-        label = ifelse(value > 0, paste("n", value, sep = " = "), ""), 
-        y = ifelse(Rate > 15, Textloc - 1, Textloc + 1)
+      theme_minimal() +
+      theme(plot.title = element_text(hjust = .5)) + 
+      geom_text(aes(label = round(Rate, 1), y = Textloc), size = 4) +
+      geom_text(
+        aes(
+          label = ifelse(value > 0, paste("n", value, sep = " = "), ""), 
+          y = ifelse(Rate > 15, Textloc - 1, Textloc + 1)
         ),
-      size = 4
+        size = 4
     ) +
-    scale_fill_gradient2(
-      limits = c(-1.65, 41.3), 
-      high = cchmcdarkpurple, 
-      low = cchmcdarkgreen, 
-      mid = cchmclightblue,
-      midpoint = .728,
-      labels = c("Lowest", rep("", 3), "Highest")
+      scale_fill_gradient2(
+        limits = c(
+          min(hospital_all$Shade[hospital_all$Condition == "MH"], na.rm = TRUE),
+          max(hospital_all$Shade[hospital_all$Condition == "MH"], na.rm = TRUE)
+          ), 
+        high = cchmcdarkpurple, 
+        mid = cchmclightblue,
+        low = cchmcdarkgreen,
+        labels = c("Lowest", "", "", "Highest")
     ) +
-    scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted"))
+      scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted"))
   }else{
     ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
     geom_bar(stat = "identity", color = "black") +
@@ -2402,24 +2390,14 @@ mh_graph <- function(k){
       fill = NULL
       ) +
     scale_y_continuous(
-      limits = c(0, 16),
-      breaks = seq(0, 16, 2)
+      limits = c(0, 18),
+      breaks = seq(0, 18, 2)
     ) +
     theme_minimal() +
     theme(plot.title = element_text(hjust = .5)) + 
     annotate("text", label = "NA", x = 1:2, y = 8) +
-    scale_fill_gradient2(
-      limits = c(-1.65, 41.3), 
-      high = cchmcdarkpurple, 
-      low = cchmcdarkgreen, 
-      mid = cchmclightblue,
-      midpoint = .728,
-      labels = c("Lowest", rep("", 3), "Highest")
-    ) +
     scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted"))
   }
-  
-  
 }
 
 mh_popup_muni <- lapply((muninums), function(k) {
@@ -2464,14 +2442,146 @@ x <- filter(hospital_all, HoodID == 13) |>
       size = 4
     ) +
     scale_fill_gradient2(
-      limits = c(-1.65, 41.3), 
+      limits = c(
+        min(hospital_all$Shade[hospital_all$Condition == "MH"], na.rm = TRUE),
+        max(hospital_all$Shade[hospital_all$Condition == "MH"], na.rm = TRUE)
+        ), 
       high = cchmcdarkpurple, 
       low = cchmcdarkgreen, 
       mid = cchmclightblue,
-      midpoint = .728,
-      labels = c("Lowest", rep("", 3), "Highest")
+      labels = c("Lowest", "", "", "Highest")
     ) +
     scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted"))
+```
+
+## Total admissions
+
+```{r}
+admit_graph <- function(k){
+  x <- hospital_all |>
+    filter(
+      HoodID == k,
+      Condition == "Total"
+      ) |>
+    mutate(
+      Measure = factor(Measure, levels = c("Admits", "Admitted")),
+      Textloc = ifelse(Rate > 70, Rate-3, Rate+3)
+    )
+  
+  if (max(x$Children) > 0){
+    ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
+    geom_bar(stat = "identity", color = "black") +
+    labs(
+      x = NULL, 
+      y = "Per 100 children", 
+      title = unique(x$Neighborhood),
+      fill = NULL
+      ) +
+    scale_y_continuous(
+      limits = c(0, 73),
+      breaks = seq(0, 70, 10),
+      labels = seq(0, 70, 10)
+    ) +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = .5)) + 
+    geom_text(aes(label = round(Rate, 1), y = Textloc), size = 4) +
+    geom_text(
+      aes(
+        label = ifelse(value > 0, paste("n", value, sep = " = "), ""), 
+        y = ifelse(Rate > 70, Textloc - 5, Textloc + 5)
+        ),
+      size = 4
+    ) +
+    scale_fill_gradient2(
+      limits = c(
+        min(hospital_all$Shade[hospital_all$Condition == "Total"], na.rm = TRUE), 
+        max(hospital_all$Shade[hospital_all$Condition == "Total"], na.rm = TRUE)
+        ), 
+      high = cchmcdarkpurple, 
+      low = cchmcdarkgreen, 
+      mid = cchmclightblue,
+      midpoint = 0,
+      labels = c("Lowest", "", "", "Highest")
+    ) +
+    scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted")) 
+  }else{
+    ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
+    geom_bar(stat = "identity", color = "black") +
+    labs(
+      x = NULL, 
+      y = "Per 100 children", 
+      title = unique(x$Neighborhood),
+      fill = NULL
+      ) +
+    scale_y_continuous(
+      limits = c(0, 73),
+      breaks = seq(0, 70, 10),
+      labels = seq(0, 70, 10)
+    ) +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = .5)) + 
+    annotate("text", label = "NA", x = 1:2, y = 8) +
+    scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted"))
+  }
+}
+
+admit_popup_muni <- lapply((muninums), function(k) {
+  admit_graph(k)
+})
+
+admit_popup_hood <- lapply((hoodnums), function(k) {
+  admit_graph(k)
+})
+```
+
+```{r}
+#| echo: false
+x <- hospital_all |>
+    filter(
+      HoodID == 13,
+      Condition == "Total"
+      ) |>
+    mutate(
+      Measure = factor(Measure, levels = c("Admits", "Admitted")),
+      Textloc = ifelse(Rate > 70, Rate-3, Rate+3)
+    )
+  
+  ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
+    geom_bar(stat = "identity", color = "black") +
+    labs(
+      x = NULL, 
+      y = "Per 100 children", 
+      title = unique(x$Neighborhood),
+      fill = NULL
+      ) +
+    scale_y_continuous(
+      limits = c(0, 73),
+      breaks = seq(0, 70, 10),
+      labels = seq(0, 70, 10)
+    ) +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = .5)) + 
+    geom_text(aes(label = round(Rate, 1), y = Textloc), size = 4) +
+    geom_text(
+      aes(
+        label = ifelse(value > 0, paste("n", value, sep = " = "), ""), 
+        y = ifelse(Rate > 70, Textloc - 5, Textloc + 5)
+        ),
+      size = 4
+    ) +
+    scale_fill_gradient2(
+      limits = c(
+        min(hospital_all$Shade[hospital_all$Condition == "Total"], na.rm = TRUE), 
+        max(hospital_all$Shade[hospital_all$Condition == "Total"], na.rm = TRUE)
+        ), 
+      high = cchmcdarkpurple, 
+      low = cchmcdarkgreen, 
+      mid = cchmclightblue,
+      midpoint = 0,
+      labels = c("Lowest", "", "", "Highest")
+    ) +
+    scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted")) 
+  
 ```
 
 # Schools and Pharmacies
@@ -2760,13 +2870,14 @@ centroids <- st_coordinates(map_lines$Centroid) |>
     Neighborhood = map_lines$Neighborhood,
     X = case_when(
       Neighborhood == "Sycamore Township" ~ -84.3788,#<1>
-      Neighborhood == "Columbia Township" ~ -84.43163,#<1>
+      Neighborhood == "Columbia Township" ~ -84.40098,#<1>
       TRUE ~ X#<1>
       ),#<1>
     Y = case_when(#<1>
       Neighborhood == "Sycamore Township" ~ 39.20386,#<1>
-      Neighborhood == "Columbia Township" ~ 39.192,#<1>
+      Neighborhood == "Columbia Township" ~ 39.17114,#<1>
       Neighborhood == "East End" ~ 39.122,#<1>
+      Neighborhood == "Riverside" ~ 39.07735,#<1>
       TRUE ~ Y#<1>
       ),#<1>
     HoodID = map_lines$HoodID
@@ -2816,6 +2927,16 @@ muni_icons <- icons(
   iconWidth = 20,
   iconHeight = 30
 )
+
+cinci_icons <- icons(
+  iconUrl = ifelse(
+    cinci_points$Type == "School", 
+    "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png",
+    "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-yellow.png"
+  ),
+  iconWidth = 20,
+  iconHeight = 30
+)
 ```
 
 Finally, city neighborhood map is created using the leaflet, leaflegend and leafpop packages and saved using the htmlwidgets package.
@@ -2850,6 +2971,7 @@ city_map <- leaflet() |>
       "Age and gender",
       "Household types",
       "Geographic mobility",
+      "Hospital admissions",
       "Asthma",
       "Diabetes",
       "Mental health",
@@ -2908,6 +3030,15 @@ city_map <- leaflet() |>
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
+    popup = popupGraph(admit_popup_hood, height = 300, width = 700),
+    group = "Hospital admissions"
+  ) |>
+  addCircleMarkers(
+    data = cinci_map_lines$Centroid,
+    color = cchmcpink,
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
     popup = popupGraph(asthma_popup_hood, height = 300, width = 700),
     group = "Asthma"
   ) |>
@@ -2933,12 +3064,12 @@ city_map <- leaflet() |>
     data = cinci_points,
     ~long,
     ~lat,
-    icon = muni_icons,
+    icon = cinci_icons,
     popup = ~Name,
     group = "Schools and pharmacies"
   ) 
 
-#saveWidget(city_map, "city map 20230927.html")
+#saveWidget(city_map, "city map.html")
 ```
 
 ```{r}
@@ -2975,6 +3106,7 @@ muni_map <- leaflet() |>
       "Age and gender",
       "Household types",
       "Geographic mobility",
+      "Hospital admissions",
       "Asthma",
       "Diabetes",
       "Mental health",
@@ -3033,6 +3165,15 @@ muni_map <- leaflet() |>
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
+    popup = popupGraph(admit_popup_muni, height = 300, width = 700),
+    group = "Hospital admissions"
+  ) |>
+  addCircleMarkers(
+    data = muni_map_lines$Centroid,
+    color = cchmcpink,
+    stroke = FALSE,
+    fillOpacity = 1,
+    radius = 4,
     popup = popupGraph(asthma_popup_muni, height = 300, width = 700),
     group = "Asthma"
   ) |>
@@ -3062,6 +3203,7 @@ muni_map <- leaflet() |>
     popup = ~Name,
     group = "Schools and pharmacies"
   ) 
+#saveWidget(muni_map, "area map.html")
 ```
 
 ```{r}
