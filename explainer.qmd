@@ -105,18 +105,18 @@ oki_muni <- rbind(oh_muni, ky_muni) |>
     Municipality = str_remove(Municipality, "The Village of "),
     Municipality = str_to_title(Municipality),
     County = str_remove(County, " County")
-    )|>
+  )|>
   select(-State)
 
 oki_muni2 <- as_tibble(oki_muni) |>
   filter(variable != "B19049_001") |> #<1>
   mutate(County = case_when(
-      Municipality == "Loveland" ~ "Hamilton",
-      Municipality == "Milford" ~ "Clermont",
-      Municipality == "Fairfield" ~ "Butler",
-      TRUE ~ County
-      )
-    ) |> 
+    Municipality == "Loveland" ~ "Hamilton",
+    Municipality == "Milford" ~ "Clermont",
+    Municipality == "Fairfield" ~ "Butler",
+    TRUE ~ County
+  )
+  ) |> 
   select(Municipality:estimate) |>
   left_join(bg_vars, by = c("variable" = "name")) |>
   group_by(Municipality, County, variable, label, concept) |> #<2>
@@ -165,10 +165,10 @@ hamco_bg <- get_acs(
   variables = bg_var_list,
   county = "Hamilton",
   state = "OH"
-  ) |>
+) |>
   inner_join(bg_vars, by = c("variable" = "name"))
 
-hamco_bg2 <- filter(hamco_bg, variable != "B19049_001") |> #<1>
+hamco_bg2 <- filter(hamco_bg, variable != "B19049_001") |>#<1>
   inner_join(allocations, multiple = "all") |>
   mutate(estimate = estimate*Allocation) |>
   filter(!is.na(estimate))
@@ -182,7 +182,7 @@ The block groups within Cincinnati are then combined into neighborhoods, and the
 ```{r}
 #| message: false
 cinci_bg <- filter(hamco_bg2, Municipality == "Cincinnati")
-  
+
 cinci_hood <- cinci_bg |>
   as_tibble() |>
   group_by(Municipality, Neighborhood, variable, label, concept) |>
@@ -237,7 +237,7 @@ pops <- hood_muni |>
   filter(
     str_ends(variable, "_001"),
     str_detect(concept, "INCOME", negate = TRUE)
-    ) |>
+  ) |>
   mutate(
     Measure = case_when(
       str_starts(concept, "SEX") ~ "Population",
@@ -274,7 +274,7 @@ race <- filter(hood_muni, str_detect(concept, "RACE")) |>
       str_detect(Group2, "Black") ~ "Black",
       str_detect(Group2, "Hispanic") ~ "Hispanic",
       TRUE ~ "Other"
-      )
+    )
   ) |>
   group_by(County, Municipality, Neighborhood, Race) |>
   summarise(Total = sum(estimate)) |>
@@ -299,8 +299,8 @@ lang <- filter(hood_muni, str_detect(concept, "LANGUAGE")) |>
       is.na(Group2) ~ "Total",
       str_detect(Group3, "English") ~ "English",
       TRUE ~ "NotWell"
-      )
-    ) |>
+    )
+  ) |>
   filter(Language != "Total") |>
   group_by(Neighborhood, Municipality, County, Language) |>
   summarise(estimate = sum(estimate)) |>
@@ -321,7 +321,7 @@ lang <- filter(hood_muni, str_detect(concept, "LANGUAGE")) |>
     TotalNotWell, 
     PopOver5, 
     TotalOtherThanEnglish:RateNotWell
-    )
+  )
   
 ```
 
@@ -350,17 +350,19 @@ benchmarks <- function(k){
     mutate(
       name = str_remove(name, "Total"),
       Measure = "Mean"
-      )
+    )
   
-  mins <- select(x, starts_with("Rate")) |>
+  mins <- ungroup(k) |>
+    select(starts_with("Rate")) |>
     summarise(across(everything(), min)) |>
     pivot_longer(cols = everything()) |>
     mutate(
       name = str_remove(name, "Rate"),
       Measure = "Min"
-      )
+    )
   
-  maxes <-select(x, starts_with("Rate")) |>
+  maxes <- ungroup(k) |>
+    select(starts_with("Rate")) |>
     summarise(across(everything(), max)) |>
     pivot_longer(cols = everything()) |>
     mutate(
@@ -387,9 +389,9 @@ benchmarks <- function(k){
         value > Mean, 
         (value-Mean)/(Max-Mean), 
         (value-Mean)/(Mean-Min)
-    ),
-    Shade = ifelse(is.infinite(Shade), NA, Shade),
-    Textloc = ifelse(value > .9, value - .025, value + .04)
+      ),
+      Shade = ifelse(is.infinite(Shade), NA, Shade),
+      Textloc = ifelse(value > .9, value - .025, value + .04)
     )
 }
 ```
@@ -404,9 +406,7 @@ lang_rates <- benchmarks(lang)
 
 race_lang <- rbind(race_rates, lang_rates) |>
   mutate(Neighborhood = coalesce(Neighborhood, Municipality)) |>
-  arrange(County, Municipality, Neighborhood) |>
   inner_join(areas)
-
 ```
 
 ```{r}
@@ -429,8 +429,8 @@ demo_graph <- function(k) {
       name = factor(
         name, 
         levels = c("White", "Black", "Hispanic",  "OtherThanEnglish", "NotWell")
-        )
       )
+    )
   
   ggplot(x, aes(x = name, y = value, fill = Shade)) +
     geom_bar(stat = "identity", color = "black") +
@@ -453,7 +453,7 @@ demo_graph <- function(k) {
     theme(
       plot.title = element_text(hjust = .5),
       legend.position = c(.9, .8)
-      ) + 
+    ) + 
     geom_text(
       aes(label = paste0(round(value*100, 1), "%"), y = Textloc), 
       size = 4
@@ -463,17 +463,20 @@ demo_graph <- function(k) {
       high = cchmcdarkpurple, 
       low = cchmcdarkgreen, 
       mid = cchmclightblue,
-      labels = c("Lowest", "", "Average", "", "Highest")
+      breaks = waiver(),
+      n.breaks = 3,
+      labels = c("Lowest", "Average", "Highest")
     )
 }
 
 muninums <- areas$HoodID[areas$Neighborhood == areas$Municipality]
+
 hoodnums <- areas$HoodID[areas$Municipality%in% c(
   "Cincinnati", 
   "Norwood", 
   "St. Bernard", 
   "Elmwood Place"
-  ) & areas$Neighborhood != "Cincinnati"]
+) & areas$Neighborhood != "Cincinnati"]
 
 demo_popup_muni <- lapply((muninums), function(k) {
   demo_graph(k)
@@ -526,7 +529,9 @@ x <- filter(race_lang, HoodID == 20) |>
       high = cchmcdarkpurple, 
       low = cchmcdarkgreen, 
       mid = cchmclightblue,
-      labels = c("Lowest", "", "Average", "", "Highest")
+      breaks = waiver(),
+      n.breaks = 3,
+      labels = c("Lowest", "Average", "Highest")
     )
 ```
 
@@ -613,7 +618,6 @@ A crosswalk from the Census Data Center estimates the share of each census tract
 
 ```{r}
 #| message: false
-
 oki <- read.csv(
   "oki allocations.csv",
   col.names = c(
@@ -722,7 +726,6 @@ dep_index <- rbind(oh_tract, ky_tract) |>
   rbind(hood_di) |>
   rename(value = DeprivationIndex) |>
   mutate(name = "DI")
-
 ```
 
 ```{r}
@@ -768,10 +771,10 @@ hood_assistance <- get_acs(
   variables = c("B19058_002", "B11012_001"),
   county = "Hamilton",
   state = "OH"
-  ) |>
+) |>
   mutate(
     Category = ifelse(variable == "B11012_001", "PopHH", "TotalAssistance")
-    ) |>
+  ) |>
   pivot_wider(
     id_cols = GEOID,
     names_from = Category,
@@ -787,7 +790,7 @@ assistance <- filter(hood_muni, variable %in% c("B19058_002", "B11012_001")) |>
   filter(Neighborhood == Municipality) |>
   mutate(
     Category = ifelse(variable == "B11012_001", "PopHH", "TotalAssistance")
-    ) |>
+  ) |>
   pivot_wider(
     id_cols = c(County, Municipality, Neighborhood),
     names_from = Category,
@@ -797,7 +800,7 @@ assistance <- filter(hood_muni, variable %in% c("B19058_002", "B11012_001")) |>
   mutate(
     value = TotalAssistance/PopHH,
     name = "Assistance"
-    ) |>
+  ) |>
   select(County:Neighborhood, value, name)
 ```
 
@@ -840,11 +843,11 @@ hood_income <- filter(hamco_bg, variable %in% c("B11012_001", "B19049_001")) |>
   summarise(
     Income = sum(Income),
     HH = sum(HH)
-    ) |>
+  ) |>
   mutate(
     value = Income/HH,
     County = "Hamilton"
-    ) |>
+  ) |>
   select(County, Neighborhood, value)
 ```
 
@@ -878,11 +881,10 @@ oki_income <- oki_muni |>
   mutate(
     value = Income/HH,
     Neighborhood = Municipality
-    ) |>
+  ) |>
   select(-c(HH, Income)) |>
   rbind(hood_income) |>
   mutate(name = "MedianIncome")
-
 ```
 
 ```{r}
@@ -922,15 +924,14 @@ pov <- select(di_meas, ends_with("Poverty")) |>
   mutate(
     value = TotalPoverty/PopPoverty,
     name = "Poverty"
-    ) |>
+  ) |>
   select(-c(TotalPoverty, PopPoverty))
-
 
 ins <- select(di_meas, TotalUninsured, PopPopulation) |>
   mutate(
     value = TotalUninsured/PopPopulation,
     name = "Uninsured"
-    ) |>
+  ) |>
   select(value, name)
 
 hs <- select(di_meas, Municipality:TotalNoHighSchool, PopOver25) |>
@@ -944,7 +945,7 @@ vac <- di_meas |>
   mutate(
     value = TotalVacant/PopHousingUnits,
     name = "Vacancy"
-    ) |>
+  ) |>
   select(Municipality:Neighborhood, name, value)
 ```
 
@@ -969,7 +970,7 @@ digraph_rates <- function(k, var){
       Min = min(k$value),
       Max = max(k$value),
       SD = sd(k$value)
-      ) |>
+    ) |>
     select(Mean:SD) |>
     cross_join(k) |>
     mutate(
@@ -978,9 +979,9 @@ digraph_rates <- function(k, var){
         ZScore > 0, 
         ((ZScore/max(ZScore))+1)/2, 
         (-ZScore/min(ZScore)+1)/2
-        ),#<1>
+      ),#<1>
       Textloc = ifelse(Scale > .9, Scale - .025, Scale + .04)
-      )
+    )
 }
 
 di_rates <- digraph_rates(dep_index, "B01001_001") |>
@@ -1035,8 +1036,8 @@ di_graph <- function(k){
         .04,
         0,
         mean(x$HoodID)
-        )
       )
+    )
     x <- x |>
       mutate(across(c(Mean:SD, value, ZScore:Shade), as.numeric))
   } #<1>
@@ -1052,16 +1053,16 @@ di_graph <- function(k){
           "Uninsured",
           "NoHS",
           "Vacancy"
-          )
-        ),
+        )
+      ),
       Label = case_when(
         is.na(value) ~ "NA",
         name == "DI" ~ as.character(round(value, 3)),
         name == "MedianIncome" ~ 
           paste0("$", format(as.integer(value), big.mark = ",")),
         TRUE ~ paste0(round(value*100, 1), "%")
-        )
       )
+    )
   
   ggplot(x, aes(x = name, y = Scale, fill = Shade)) +
     geom_bar(stat = "identity") +
@@ -1086,7 +1087,7 @@ di_graph <- function(k){
     theme(
       plot.title = element_text(hjust = .5),
       legend.position = "bottom"
-      ) + 
+    ) + 
     geom_text(aes(label = Label, y = Textloc), size = 4) +
     scale_fill_gradient2(
       limits = c(0, 1), 
@@ -1094,7 +1095,9 @@ di_graph <- function(k){
       low = cchmcdarkpurple,
       mid = cchmclightblue,
       midpoint = .5,
-      labels = c("Worst", "", "Average", "", "Best")
+      breaks = waiver(),
+      n.breaks = 3,
+      labels = c("Worst", "Average", "Best")
     )
 }
 
@@ -1166,7 +1169,9 @@ ggplot(x, aes(x = name, y = Scale, fill = Shade)) +
       low = cchmcdarkgreen,
       mid = cchmclightblue,
       midpoint = .5,
-      labels = c("Worst", "", "Average", "", "Best")
+      breaks = waiver(),
+      n.breaks = 3,
+      labels = c("Worst", "Average", "Best")
     )
 ```
 
@@ -1188,7 +1193,7 @@ pyramid <- filter(hood_muni, concept == "SEX BY AGE") |>
       Age %in% c("60 and 61", "62 to 64") ~ "60 to 64",
       Age %in% c("65 and 66", "67 to 69") ~ "65 to 69",
       TRUE ~ Age
-      ),
+    ),
     Age = factor(
       Age, 
       levels = c(
@@ -1210,9 +1215,9 @@ pyramid <- filter(hood_muni, concept == "SEX BY AGE") |>
         "75 to 79",
         "80 to 84",
         "85 and over"
-        )
       )
-    ) |>
+    )
+  ) |>
   group_by(County, Municipality, Neighborhood, Gender, Age) |>
   summarise(Population = sum(estimate)) |>
   inner_join(areas) |>
@@ -1220,7 +1225,7 @@ pyramid <- filter(hood_muni, concept == "SEX BY AGE") |>
   mutate(
     Total = sum(Population),
     Share = round(100*Population/Total, 1)
-    ) 
+  ) 
 ```
 
 ```{r}
@@ -1245,8 +1250,8 @@ pop_pyr <- function(k){
       x = Age, 
       y = ifelse(Gender == "Male", -Share, Share), 
       fill = Gender
-      )
-    ) +
+    )
+  ) +
     geom_bar(stat = "identity") +
     coord_flip() +
     labs(
@@ -1254,12 +1259,12 @@ pop_pyr <- function(k){
       y = "% of population", 
       fill = NULL, 
       title = x$Neighborhood[1]
-      ) +
+    ) +
     scale_y_continuous(
       limits = c(-30, 30), 
       breaks = seq(-25, 25, 5),
       labels = c(25, 20, 15, 10, 5, seq(0, 25, 5))
-      ) +
+    ) +
     scale_fill_manual(values = c(cchmcpink, cchmclightblue)) +
     theme_minimal() +
     theme(plot.title = element_text(hjust = .5))
@@ -1313,14 +1318,13 @@ The Household Types chart consolidates 15 ACS variable into four broad categorie
 
 ```{r}
 #| message: false
-
 hh <- filter(
   hood_muni, 
   variable %in% c(
     paste0("B11012_00", c(3, 4, 6, 7, 9)), 
     paste0("B11012_0", c(10:12, 14:17))
-    )
-  ) |>
+  )
+) |>
   mutate(
     HHType = case_when(
       str_detect(Group2, "couple") ~ 
@@ -1386,7 +1390,9 @@ hh_graph <- function(k) {
       high = cchmcdarkpurple, 
       low = cchmcdarkgreen, 
       mid = cchmclightblue,
-      labels = c("Lowest", "", "Average", "", "Highest")
+      breaks = waiver(),
+      n.breaks = 3,
+      labels = c("Lowest", "Average", "Highest")
     )
 } 
 
@@ -1437,7 +1443,9 @@ x <- filter(hh_rates, HoodID == 30) |>
       high = cchmcdarkpurple, 
       low = cchmcdarkgreen, 
       mid = cchmclightblue,
-      labels = c("Lowest", "", "Average", "", "Highest")
+      breaks = waiver(),
+      n.breaks = 3,
+      labels = c("Lowest", "Average", "Highest")
     )
 ```
 
@@ -1471,7 +1479,7 @@ mobile <- hood_muni |>
     RateSameCity = TotalSameCity/PopMobility,
     RateOtherUS = TotalOtherUS/PopMobility,
     RateAbroad = TotalAbroad/PopMobility
-    ) |>
+  ) |>
   select(Municipality:TotalSameHome, PopMobility, TotalOtherUS:RateAbroad)
 
 mobile_rates <- benchmarks(mobile) |>
@@ -1497,7 +1505,7 @@ mobile_graph <- function(k){
     scale_x_discrete(
       labels = c(
         "Same Home",
-        "Same City",
+        "Same metro area",
         "Elsewhere\nin U.S.",
         "Other Country"
       )
@@ -1513,7 +1521,9 @@ mobile_graph <- function(k){
       high = cchmcdarkpurple, 
       low = cchmcdarkgreen, 
       mid = cchmclightblue,
-      labels = c("Lower", "", "Average", "", "Higher")
+      breaks = waiver(),
+      n.breaks = 3,
+      labels = c("Lowest", "Average", "Highest")
     )
 }
 
@@ -1565,7 +1575,9 @@ x <- filter(mobile_rates, HoodID == 42) |>
       high = cchmcdarkpurple, 
       low = cchmcdarkgreen, 
       mid = cchmclightblue,
-      labels = c("Lowest", "", "Average", "", "Highest")
+      breaks = waiver(),
+      n.breaks = 3,
+      labels = c("Lowest", "Average", "Highest")
     )
 ```
 
@@ -1628,7 +1640,7 @@ asthma_exceptions <- dbGetQuery(con, "
       OR edg.code like 'Q24.%'
       OR edg.code like 'Q25.%'
       OR edg.code like 'Q89.3%'
-                                ") |>#<1>
+                                ") |>
   mutate(AsthmaException = 1)
 
 admits <- dbGetQuery(con, "
@@ -1654,12 +1666,11 @@ admits <- dbGetQuery(con, "
 		AND (a.eff_end_date IS NULL OR r.hosp_admsn_time < a.eff_end_date)
 		AND year(r.hosp_admsn_time) = 2022
 		AND a.state IN ('Ohio', 'Indiana', 'Kentucky')
-		AND a.addr_hx_line1 not like '222 E%'
                      ") |>
   mutate(
     Asthma = ifelse(
-      disch_icd_1 %in% c(
-        "J45.21", #<1>
+      disch_icd_1 %in% c(#<1>
+        "J45.21",#<1>
         "J45.22", #<1>
         "J45.31", #<1>
         "J45.32", #<1>
@@ -1672,7 +1683,7 @@ admits <- dbGetQuery(con, "
       ),
       1,
       0
-    ),#<1>
+    ),
     Diabetes = ifelse(
       disch_icd_1 %in% c(
         "E08.10", #<2>
@@ -1699,18 +1710,18 @@ admits <- dbGetQuery(con, "
       0
     ),
     MH = ifelse(department_id %in% c(
-      20026290, #<3>
-      10401085,	#<3>
-      10401086,	#<3>
-      10401087,	#<3>
-      10401088,	#<3>
-      10401089,	#<3>
-      10401090,	#<3>
-      10401091,	#<3>
-      10401092,	#<3>
-      10401093,	#<3>
-      10401094#<3>
-    ),
+      20026290, 
+      10401085,	
+      10401086,	
+      10401087,	
+      10401088,	
+      10401089,	
+      10401090,	
+      10401091,	
+      10401092,	
+      10401093,	
+      10401094
+    ) | str_starts(disch_icd_1, "F") | str_starts(disch_icd_1, "R45"),
     1,
     0
     )
@@ -1726,7 +1737,6 @@ admits <- dbGetQuery(con, "
 
 1.  Diagnosis codes from [C2D2](https://c2d2.cchmc.org/article/552/).
 2.  Diagnosis codes from [C2D2](https://c2d2.cchmc.org/article/1307/).
-3.  Department codes from [C2D2](https://c2d2.cchmc.org/article/100/).
 
 ## Geocoding
 
@@ -1764,46 +1774,46 @@ Cleaning the addresses reveals further addresses that are functional duplicates.
 adds_cleaned <- adds_unique |>
   mutate(
     Add1 = case_when(
-      str_detect(add_line_1, "4933 Allen") ~ "4933 Allens Ridge Dr",#<1>
-      str_detect(add_line_1, "4231 Sophia") ~ "4231 Sophias Way",#<1>
-      str_detect(add_line_1, "5583 Jamie") ~ "5583 Jamies Oak Ct",#<1>
-      str_detect(add_line_1, "8681 Harper") ~ "8681 Harpers Point Drive Apt A",#<1>
+      str_detect(add_line_1, "4933 Allen") ~ "4933 Allens Ridge Dr",
+      str_detect(add_line_1, "4231 Sophia") ~ "4231 Sophias Way",
+      str_detect(add_line_1, "5583 Jamie") ~ "5583 Jamies Oak Ct",
+      str_detect(add_line_1, "8681 Harper") ~ "8681 Harpers Point Drive Apt A",
       TRUE ~ add_line_1
     ),
-    Add1 = ifelse(str_starts(Add1, "#"), str_remove(Add1, "#"), Add1),#<2>
-    Add1 = str_trim(str_to_upper(Add1)),#<2>
-    First = str_trunc(Add1, 3, "right", ellipsis = ""),#<2>
-    Add1 = ifelse(is.na(parse_number(First)), "", Add1),#<2>
-    Add1 = ifelse(#<2>
-      str_sub(Add1, 1, 1) %in% LETTERS, #<2>
-      str_sub(Add1, 2, str_length(Add1)), #<2>
-      Add1#<2>
-    ),#<2>
-    Add1 = ifelse(#<2>
-      str_sub(Add1, 1, 1) %in% LETTERS, #<2>
-      str_sub(Add1, 2, str_length(Add1)), #<2>
-      Add1#<2>
-    ),#<2>
+    Add1 = ifelse(str_starts(Add1, "#"), str_remove(Add1, "#"), Add1),
+    Add1 = str_trim(str_to_upper(Add1)),
+    First = str_trunc(Add1, 3, "right", ellipsis = ""),
+    Add1 = ifelse(is.na(parse_number(First)), "", Add1),
+    Add1 = ifelse(
+      str_sub(Add1, 1, 1) %in% LETTERS, 
+      str_sub(Add1, 2, str_length(Add1)), 
+      Add1
+    ),
+    Add1 = ifelse(
+      str_sub(Add1, 1, 1) %in% LETTERS, 
+      str_sub(Add1, 2, str_length(Add1)), 
+      Add1
+    ),
     Add2 = str_trim(str_to_upper(add_line_2)),
     Add2 = coalesce(Add2, ""),
     Address = case_when(
-      str_sub(Add1, 1, 1) %in% 1:9 ~ Add1,#<3>
-      str_sub(Add2, 1, 1) %in% 1:9 ~ Add2,#<3>
-      TRUE ~ NA#<3>
+      str_sub(Add1, 1, 1) %in% 1:9 ~ Add1,
+      str_sub(Add2, 1, 1) %in% 1:9 ~ Add2,
+      TRUE ~ NA
     ),
     City = str_to_title(city),
     Zip = str_trunc(zip, 5, "right", ellipsis = "")
   ) |>
   filter(Address != "") |>
-  separate_wider_delim(#<4>
-    Address, delim = "APT", names = "Address", too_many = "drop"#<4>
-  ) |>#<4>
-  separate_wider_delim(#<4>
-    Address, delim = "#", names = "Address", too_many = "drop"#<4>
-  ) |>#<4>
-  separate_wider_delim(#<4>
-    Address, delim = "UNIT", names = "Address", too_many = "drop"#<4>
-  ) |>#<4>
+  separate_wider_delim(
+    Address, delim = "APT", names = "Address", too_many = "drop"
+  ) |>
+  separate_wider_delim(
+    Address, delim = "#", names = "Address", too_many = "drop"
+  ) |>
+  separate_wider_delim(
+    Address, delim = "UNIT", names = "Address", too_many = "drop"
+  ) |>
   mutate(Address = str_trim(Address))
 
 cleaned_unique <- adds_cleaned |>
@@ -1813,7 +1823,6 @@ cleaned_unique <- adds_cleaned |>
 
 adds_cleaned <- inner_join(adds_cleaned, cleaned_unique)
 adds <- left_join(adds, select(adds_cleaned, AddID1, AddID2))
-
 ```
 
 1.  Removes non-ASCII characters.
@@ -1835,7 +1844,7 @@ for_geocoder <- cleaned_unique |>
   ) |>
   select(AddID2, address) |>
   rename(ID = AddID2)
-write_csv(for_geocoder, "for_degauss.csv")
+#write_csv(for_geocoder, "for_degauss.csv")
 #docker run --rm -v ${PWD}:/tmp ghcr.io/degauss-org/geocoder:3.0.2 for_degauss.csv#<1>
 ```
 
@@ -1861,7 +1870,6 @@ muni_lines <- oki_muni |>
   group_by(Municipality, County) |>
   summarise(geometry = st_union(geometry)) |>
   st_as_sf()
-  
 ```
 
 Cincinnati neighborhood boundaries are obtained using the [cincy](https://geomarker.io/cincy/) library. The Statistical Neighborhood Approximation data set it used because we are using Census data, and these boundaries are drawn to coincide with Census block groups.
@@ -1870,7 +1878,7 @@ Cincinnati neighborhood boundaries are obtained using the [cincy](https://geomar
 #| message: false
 library(cincy)
 
-hood_lines <- cincy::neigh_sna |>
+hood_lines <- neigh_sna |>
   rename(Neighborhood = neighborhood) |>
   mutate(
     Neighborhood = case_when(
@@ -1924,7 +1932,6 @@ muni_add <- rbind(muni_single, muni_multi)
 
 hooded1 <- filter(muni_add, Municipality != "Cincinnati") |>
   mutate(Neighborhood = Municipality) 
-
 ```
 
 Addresses placed in Cincinnati are then merged with the neighborhood lines to determine a neighborhood.
@@ -1979,7 +1986,7 @@ admit_totals <- inner_join(admits, hooded_all, multiple = "all") |>
     Asthma,
     Diabetes,
     MH
-    ) |>
+  ) |>
   group_by(County, Municipality, Neighborhood) |>
   summarise(
     Asthma_Admits = sum(Asthma),
@@ -1990,7 +1997,7 @@ admit_totals <- inner_join(admits, hooded_all, multiple = "all") |>
     MH_Admitted = length(unique(pat_id[MH == 1])),
     Total_Admits = n(),
     Total_Admitted = length(unique(pat_id))
-    )
+  )
 
 hospital <- full_join(admit_totals, registry_totals) |>
   mutate(across(Asthma_Admits:Diabetes_Registry, \(x) coalesce(x, 0)))
@@ -2014,8 +2021,8 @@ children <- filter(
     "5 to 9 years",
     "10 to 14 years",
     "15 to 17 years"
-    )
-  ) |>
+  )
+) |>
   group_by(County, Municipality, Neighborhood) |>
   summarise(Children = sum(estimate))
 
@@ -2028,7 +2035,7 @@ hospital_children <- rbind(hospital, cinci_hospital) |>
   mutate(
     Rate = value*100/Children,
     Rate = ifelse(is.infinite(Rate), NA, Rate)
-    ) |>
+  ) |>
   separate_wider_delim(
     Measure,
     delim = "_",
@@ -2054,12 +2061,11 @@ hospital_means <- ungroup(hospital_children) |>
     filter(children, Neighborhood == Municipality) |> 
       ungroup() |> 
       summarise(Children = sum(Children))
-    ) |>
+  ) |>
   mutate(Mean = 100*value/Children) |>
   select(Condition, Measure, Mean)
-  
+
 hospital_rates <- ungroup(hospital_children) |>
-  filter(Municipality == Neighborhood) |>
   group_by(Condition, Measure) |>
   summarise(
     Min = min(Rate, na.rm = TRUE),
@@ -2072,7 +2078,7 @@ hospital_all <- inner_join(hospital_children, hospital_rates) |>
   mutate(
     Rate = ifelse(is.nan(Rate), NA, Rate),
     Shade = (Rate-Mean)/SD
-    ) |>
+  ) |>
   inner_join(areas)
 ```
 
@@ -2083,6 +2089,153 @@ head(hospital_all)
 ```
 
 With that, the data set is ready for graphing.
+
+## Hospital admissions
+
+```{r}
+admit_graph <- function(k){
+  x <- hospital_all |>
+    filter(
+      HoodID == k,
+      Condition == "Total"
+    ) |>
+    mutate(
+      Measure = factor(Measure, levels = c("Admits", "Admitted")),
+      Textloc = ifelse(Rate > 70, Rate-3, Rate+3)
+    )
+  
+  if (max(x$Children) > 0){
+    ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
+      geom_bar(stat = "identity", color = "black") +
+      labs(
+        x = NULL, 
+        y = "Per 100 children", 
+        title = unique(x$Neighborhood),
+        fill = NULL
+      ) +
+      scale_y_continuous(
+        limits = c(0, 73),
+        breaks = seq(0, 60, 10),
+        labels = seq(0, 60, 10)
+      ) +
+      theme_minimal() +
+      theme(plot.title = element_text(hjust = .5)) + 
+      geom_text(aes(label = round(Rate, 1), y = Textloc), size = 4) +
+      geom_text(
+        aes(
+          label = ifelse(value > 0, paste("n", value, sep = " = "), ""), 
+          y = ifelse(Rate > 70, Textloc - 5, Textloc + 5)
+        ),
+        size = 4
+      ) +
+      scale_fill_gradient2(
+        limits = c(
+          min(
+            hospital_all$Shade[hospital_all$Condition == "Total"], 
+            na.rm = TRUE
+            ), 
+          max(
+            hospital_all$Shade[hospital_all$Condition == "Total"], 
+            na.rm = TRUE
+            )
+        ), 
+        high = cchmcdarkpurple, 
+        low = cchmcdarkgreen, 
+        mid = cchmclightblue,
+        midpoint = 0,
+        breaks = waiver(),
+        n.breaks = 2,
+        labels = c("Lowest", "Highest")
+      ) +
+      scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted")) 
+  }else{
+    ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
+      geom_bar(stat = "identity", color = "black") +
+      labs(
+        x = NULL, 
+        y = "Per 100 children", 
+        title = unique(x$Neighborhood),
+        fill = NULL
+      ) +
+      scale_y_continuous(
+        limits = c(0, 73),
+        breaks = seq(0, 70, 10),
+        labels = seq(0, 70, 10)
+      ) +
+      theme_minimal() +
+      theme(plot.title = element_text(hjust = .5)) + 
+      annotate("text", label = "NA", x = 1:2, y = 8) +
+      scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted"))
+  }
+}
+
+admit_popup_muni <- lapply((muninums), function(k) {
+  admit_graph(k)
+})
+
+admit_popup_hood <- lapply((hoodnums), function(k) {
+  admit_graph(k)
+})
+
+```
+
+```{r}
+#| echo: false
+
+x <- hospital_all |>
+    filter(
+      HoodID == 47,
+      Condition == "Total"
+    ) |>
+    mutate(
+      Measure = factor(Measure, levels = c("Admits", "Admitted")),
+      Textloc = ifelse(Rate > 70, Rate-3, Rate+3)
+    )
+
+ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
+  geom_bar(stat = "identity", color = "black") +
+  labs(
+    x = NULL, 
+    y = "Per 100 children", 
+    title = unique(x$Neighborhood),
+    fill = NULL
+    ) +
+  scale_y_continuous(
+    limits = c(0, 73),
+    breaks = seq(0, 70, 10),
+    labels = seq(0, 70, 10)
+    ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = .5)) +
+  geom_text(aes(label = round(Rate, 1), y = Textloc), size = 4) +
+  geom_text(
+    aes(
+      label = ifelse(value > 0, paste("n", value, sep = " = "), ""),
+      y = ifelse(Rate > 70, Textloc - 5, Textloc + 5)
+      ),
+    size = 4
+    ) +
+  scale_fill_gradient2(
+    limits = c(
+      min(
+        hospital_all$Shade[hospital_all$Condition == "Total"],
+        na.rm = TRUE
+        ),
+      max(
+        hospital_all$Shade[hospital_all$Condition == "Total"],
+        na.rm = TRUE
+        )
+      ),
+    high = cchmcdarkpurple,
+    low = cchmcdarkgreen,
+    mid = cchmclightblue,
+    midpoint = 0,
+    breaks = waiver(),
+    n.breaks = 2,
+    labels = c("Lowest", "Highest")
+    ) +
+  scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted")) 
+```
 
 ## Asthma
 
@@ -2095,65 +2248,75 @@ asthma_graph <- function(k){
         Measure, 
         levels = c("Registry", "Admits", "Admitted")
       ),
-      Textloc = ifelse(Rate > 100, Rate-3, Rate+3)
+      Textloc = ifelse(Rate > 100, Rate-5, Rate+5)
     )
   
   if (max(x$Children) > 0){
     ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
-    geom_bar(stat = "identity", color = "black") +
-    labs(
-      x = NULL, 
-      y = "Per 100 children", 
-      title = unique(x$Neighborhood),
-      fill = NULL
+      geom_bar(stat = "identity", color = "black") +
+      labs(
+        x = NULL, 
+        y = "Per 100 children", 
+        title = unique(x$Neighborhood),
+        fill = NULL
       ) +
-    scale_y_continuous(
-      limits = c(0, 111),
-      breaks = seq(0, 110, 10)
-    ) +
-    theme_minimal() +
-    theme(plot.title = element_text(hjust = .5)) + 
-    geom_text(aes(label = round(Rate, 1), y = Textloc), size = 4) +
-    geom_text(
-      aes(
-        label = ifelse(value > 0, paste("n", value, sep = " = "), ""), 
-        y = ifelse(Rate > 100, Textloc - 5, Textloc + 5)
+      scale_y_continuous(
+        limits = c(0, 190),
+        breaks = seq(0, 180, 20)
+      ) +
+      theme_minimal() +
+      theme(plot.title = element_text(hjust = .5)) + 
+      geom_text(aes(label = round(Rate, 1), y = Textloc), size = 4) +
+      geom_text(
+        aes(
+          label = ifelse(value > 0, paste("n", value, sep = " = "), ""), 
+          y = ifelse(Rate > 100, Textloc - 10, Textloc + 10)
         ),
-      size = 4
-    ) +
-    scale_fill_gradient2(
-      limits = c(
-        min(hospital_all$Shade[hospital_all$Condition == "Asthma"], na.rm = TRUE),
-        max(hospital_all$Shade[hospital_all$Condition == "Asthma"], na.rm = TRUE)
-        ), 
-      high = cchmcdarkpurple, 
-      low = cchmcdarkgreen, 
-      mid = cchmclightblue,
-      labels = c("Lowest", rep("", 3), "Highest")
-    ) +
-    scale_x_discrete(labels = c("Registry", "Admissions", "Patients\nAdmitted"))
-  }else{
-  ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
-    geom_bar(stat = "identity", color = "black") +
-    labs(
-      x = NULL, 
-      y = "Per 100 children", 
-      title = unique(x$Neighborhood),
-      fill = NULL
+        size = 4
       ) +
-    scale_y_continuous(
-      limits = c(0, 111),
-      breaks = seq(0, 110, 10)
-    ) +
-    theme_minimal() +
-    theme(plot.title = element_text(hjust = .5)) + 
-    annotate("text", label = "NA", x = 1:3, y = 50) +
-    scale_x_discrete(labels = c("Registry", "Admits", "Patients\nAdmitted"))
-    }
+      scale_fill_gradient2(
+        limits = c(
+          min(
+            hospital_all$Shade[hospital_all$Condition == "Asthma"], 
+            na.rm = TRUE
+            ),
+          max(
+            hospital_all$Shade[hospital_all$Condition == "Asthma"], 
+            na.rm = TRUE
+            )
+        ), 
+        high = cchmcdarkpurple, 
+        low = cchmcdarkgreen, 
+        mid = cchmclightblue,
+        breaks = waiver(),
+        n.breaks = 2,
+        labels = c("Lowest", "Highest")
+      ) +
+      scale_x_discrete(
+        labels = c("Registry", "Admissions", "Patients\nAdmitted")
+        )
+  }else{
+    ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
+      geom_bar(stat = "identity", color = "black") +
+      labs(
+        x = NULL, 
+        y = "Per 100 children", 
+        title = unique(x$Neighborhood),
+        fill = NULL
+      ) +
+      scale_y_continuous(
+        limits = c(0, 111),
+        breaks = seq(0, 110, 10)
+      ) +
+      theme_minimal() +
+      theme(plot.title = element_text(hjust = .5)) + 
+      annotate("text", label = "NA", x = 1:3, y = 50) +
+      scale_x_discrete(labels = c("Registry", "Admits", "Patients\nAdmitted"))
+  }
 }
 
 asthma_popup_muni <- lapply((muninums), function(k) {
- asthma_graph(k)
+  asthma_graph(k)
 })
 
 asthma_popup_hood <- lapply((hoodnums), function(k) {
@@ -2204,7 +2367,9 @@ x <- filter(hospital_all, HoodID == 13) |>
       high = cchmcdarkpurple, 
       low = cchmcdarkgreen, 
       mid = cchmclightblue,
-      labels = c("Lowest", "", "", "", "Highest")
+      breaks = waiver(),
+      n.breaks = 2,
+      labels = c("Lowest", "Highest")
     ) +
     scale_x_discrete(labels = c("Registry", "Admissions", "Patients\nAdmitted"))
 ```
@@ -2226,55 +2391,65 @@ diabetes_graph <- function(k){
   
   if (max(x$Children) > 0){
     ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
-    geom_bar(stat = "identity", color = "black") +
-    labs(
-      x = NULL, 
-      y = "Per 100 children", 
-      title = unique(x$Neighborhood),
-      fill = NULL
+      geom_bar(stat = "identity", color = "black") +
+      labs(
+        x = NULL, 
+        y = "Per 100 children", 
+        title = unique(x$Neighborhood),
+        fill = NULL
       ) +
-    scale_y_continuous(
-      limits = c(0, 7),
-      breaks = seq(0, 7, 1)
-    ) +
-    theme_minimal() +
-    theme(plot.title = element_text(hjust = .5)) + 
-    geom_text(aes(label = round(Rate, 1), y = Textloc), size = 4) +
-    geom_text(
-      aes(
-        label = ifelse(value > 0, paste("n", value, sep = " = "), ""), 
-        y = ifelse(Rate > 6, Textloc - .25, Textloc + .25)
+      scale_y_continuous(
+        limits = c(0, 7),
+        breaks = seq(0, 7, 1)
+      ) +
+      theme_minimal() +
+      theme(plot.title = element_text(hjust = .5)) + 
+      geom_text(aes(label = round(Rate, 1), y = Textloc), size = 4) +
+      geom_text(
+        aes(
+          label = ifelse(value > 0, paste("n", value, sep = " = "), ""), 
+          y = ifelse(Rate > 6, Textloc - .25, Textloc + .25)
         ),
-      size = 4
-    ) +
-    scale_fill_gradient2(
-      limits = c(
-        min(hospital_all$Shade[hospital_all$Condition=="Diabetes"], na.rm = TRUE),
-        max(hospital_all$Shade[hospital_all$Condition=="Diabetes"], na.rm = TRUE)
+        size = 4
+      ) +
+      scale_fill_gradient2(
+        limits = c(
+          min(
+            hospital_all$Shade[hospital_all$Condition=="Diabetes"], 
+            na.rm = TRUE
+            ),
+          max(
+            hospital_all$Shade[hospital_all$Condition=="Diabetes"], 
+            na.rm = TRUE
+            )
         ), 
-      high = cchmcdarkpurple, 
-      low = cchmcdarkgreen, 
-      mid = cchmclightblue,
-      labels = c("Lowest", rep("", 4), "Highest")
-    ) +
-    scale_x_discrete(labels = c("Registry", "Admissions", "Patients\nAdmitted"))
+        high = cchmcdarkpurple, 
+        low = cchmcdarkgreen, 
+        mid = cchmclightblue,
+        breaks = waiver(),
+        n.breaks = 2,
+        labels = c("Lowest", "Highest")
+      ) +
+      scale_x_discrete(
+        labels = c("Registry", "Admissions", "Patients\nAdmitted")
+        )
   }else{
     ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
-    geom_bar(stat = "identity", color = "black") +
-    labs(
-      x = NULL, 
-      y = "Per 100 children", 
-      title = unique(x$Neighborhood),
-      fill = NULL
+      geom_bar(stat = "identity", color = "black") +
+      labs(
+        x = NULL, 
+        y = "Per 100 children", 
+        title = unique(x$Neighborhood),
+        fill = NULL
       ) +
-    scale_y_continuous(
-      limits = c(0, 7),
-      breaks = seq(0, 7, 1)
-    ) +
-    theme_minimal() +
-    theme(plot.title = element_text(hjust = .5)) + 
-    annotate("text", label = "NA", x = 1:3, y = 3.5) +
-    scale_x_discrete(labels = c("Registry", "Admits", "Patients\nAdmitted"))
+      scale_y_continuous(
+        limits = c(0, 7),
+        breaks = seq(0, 7, 1)
+      ) +
+      theme_minimal() +
+      theme(plot.title = element_text(hjust = .5)) + 
+      annotate("text", label = "NA", x = 1:3, y = 3.5) +
+      scale_x_discrete(labels = c("Registry", "Admits", "Patients\nAdmitted"))
   }
 }
 
@@ -2323,12 +2498,22 @@ x <- filter(hospital_all, HoodID == 13) |>
       size = 4
     ) +
     scale_fill_gradient2(
-      limits = c(-.762, 127), 
-      high = cchmcdarkpurple, 
-      low = cchmcdarkgreen, 
-      mid = cchmclightblue,
-      midpoint = .4,
-      labels = c("Lowest", rep("", 4), "Highest")
+      limits = c(
+          min(
+            hospital_all$Shade[hospital_all$Condition=="Diabetes"], 
+            na.rm = TRUE
+            ),
+          max(
+            hospital_all$Shade[hospital_all$Condition=="Diabetes"], 
+            na.rm = TRUE
+            )
+        ), 
+        high = cchmcdarkpurple, 
+        low = cchmcdarkgreen, 
+        mid = cchmclightblue,
+        breaks = waiver(),
+        n.breaks = 2,
+        labels = c("Lowest", "Highest")
     ) +
     scale_x_discrete(labels = c("Registry", "Admits", "Patients\nAdmitted"))
 ```
@@ -2358,7 +2543,7 @@ mh_graph <- function(k){
       scale_y_continuous(
         limits = c(0, 18),
         breaks = seq(0, 18, 2)
-    ) +
+      ) +
       theme_minimal() +
       theme(plot.title = element_text(hjust = .5)) + 
       geom_text(aes(label = round(Rate, 1), y = Textloc), size = 4) +
@@ -2368,35 +2553,37 @@ mh_graph <- function(k){
           y = ifelse(Rate > 15, Textloc - 1, Textloc + 1)
         ),
         size = 4
-    ) +
+      ) +
       scale_fill_gradient2(
         limits = c(
           min(hospital_all$Shade[hospital_all$Condition == "MH"], na.rm = TRUE),
           max(hospital_all$Shade[hospital_all$Condition == "MH"], na.rm = TRUE)
-          ), 
+        ), 
         high = cchmcdarkpurple, 
         mid = cchmclightblue,
         low = cchmcdarkgreen,
-        labels = c("Lowest", "", "", "Highest")
-    ) +
+        breaks = waiver(),
+        n.breaks = 2,
+        labels = c("Lowest", "Highest")
+      ) +
       scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted"))
   }else{
     ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
-    geom_bar(stat = "identity", color = "black") +
-    labs(
-      x = NULL, 
-      y = "Per 100 children", 
-      title = unique(x$Neighborhood),
-      fill = NULL
+      geom_bar(stat = "identity", color = "black") +
+      labs(
+        x = NULL, 
+        y = "Per 100 children", 
+        title = unique(x$Neighborhood),
+        fill = NULL
       ) +
-    scale_y_continuous(
-      limits = c(0, 18),
-      breaks = seq(0, 18, 2)
-    ) +
-    theme_minimal() +
-    theme(plot.title = element_text(hjust = .5)) + 
-    annotate("text", label = "NA", x = 1:2, y = 8) +
-    scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted"))
+      scale_y_continuous(
+        limits = c(0, 18),
+        breaks = seq(0, 18, 2)
+      ) +
+      theme_minimal() +
+      theme(plot.title = element_text(hjust = .5)) + 
+      annotate("text", label = "NA", x = 1:2, y = 8) +
+      scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted"))
   }
 }
 
@@ -2449,139 +2636,11 @@ x <- filter(hospital_all, HoodID == 13) |>
       high = cchmcdarkpurple, 
       low = cchmcdarkgreen, 
       mid = cchmclightblue,
-      labels = c("Lowest", "", "", "Highest")
+      breaks = waiver(),
+      n.breaks = 2,
+      labels = c("Lowest", "Highest")
     ) +
     scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted"))
-```
-
-## Total admissions
-
-```{r}
-admit_graph <- function(k){
-  x <- hospital_all |>
-    filter(
-      HoodID == k,
-      Condition == "Total"
-      ) |>
-    mutate(
-      Measure = factor(Measure, levels = c("Admits", "Admitted")),
-      Textloc = ifelse(Rate > 70, Rate-3, Rate+3)
-    )
-  
-  if (max(x$Children) > 0){
-    ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
-    geom_bar(stat = "identity", color = "black") +
-    labs(
-      x = NULL, 
-      y = "Per 100 children", 
-      title = unique(x$Neighborhood),
-      fill = NULL
-      ) +
-    scale_y_continuous(
-      limits = c(0, 73),
-      breaks = seq(0, 70, 10),
-      labels = seq(0, 70, 10)
-    ) +
-    theme_minimal() +
-    theme(plot.title = element_text(hjust = .5)) + 
-    geom_text(aes(label = round(Rate, 1), y = Textloc), size = 4) +
-    geom_text(
-      aes(
-        label = ifelse(value > 0, paste("n", value, sep = " = "), ""), 
-        y = ifelse(Rate > 70, Textloc - 5, Textloc + 5)
-        ),
-      size = 4
-    ) +
-    scale_fill_gradient2(
-      limits = c(
-        min(hospital_all$Shade[hospital_all$Condition == "Total"], na.rm = TRUE), 
-        max(hospital_all$Shade[hospital_all$Condition == "Total"], na.rm = TRUE)
-        ), 
-      high = cchmcdarkpurple, 
-      low = cchmcdarkgreen, 
-      mid = cchmclightblue,
-      midpoint = 0,
-      labels = c("Lowest", "", "", "Highest")
-    ) +
-    scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted")) 
-  }else{
-    ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
-    geom_bar(stat = "identity", color = "black") +
-    labs(
-      x = NULL, 
-      y = "Per 100 children", 
-      title = unique(x$Neighborhood),
-      fill = NULL
-      ) +
-    scale_y_continuous(
-      limits = c(0, 73),
-      breaks = seq(0, 70, 10),
-      labels = seq(0, 70, 10)
-    ) +
-    theme_minimal() +
-    theme(plot.title = element_text(hjust = .5)) + 
-    annotate("text", label = "NA", x = 1:2, y = 8) +
-    scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted"))
-  }
-}
-
-admit_popup_muni <- lapply((muninums), function(k) {
-  admit_graph(k)
-})
-
-admit_popup_hood <- lapply((hoodnums), function(k) {
-  admit_graph(k)
-})
-```
-
-```{r}
-#| echo: false
-x <- hospital_all |>
-    filter(
-      HoodID == 13,
-      Condition == "Total"
-      ) |>
-    mutate(
-      Measure = factor(Measure, levels = c("Admits", "Admitted")),
-      Textloc = ifelse(Rate > 70, Rate-3, Rate+3)
-    )
-  
-  ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
-    geom_bar(stat = "identity", color = "black") +
-    labs(
-      x = NULL, 
-      y = "Per 100 children", 
-      title = unique(x$Neighborhood),
-      fill = NULL
-      ) +
-    scale_y_continuous(
-      limits = c(0, 73),
-      breaks = seq(0, 70, 10),
-      labels = seq(0, 70, 10)
-    ) +
-    theme_minimal() +
-    theme(plot.title = element_text(hjust = .5)) + 
-    geom_text(aes(label = round(Rate, 1), y = Textloc), size = 4) +
-    geom_text(
-      aes(
-        label = ifelse(value > 0, paste("n", value, sep = " = "), ""), 
-        y = ifelse(Rate > 70, Textloc - 5, Textloc + 5)
-        ),
-      size = 4
-    ) +
-    scale_fill_gradient2(
-      limits = c(
-        min(hospital_all$Shade[hospital_all$Condition == "Total"], na.rm = TRUE), 
-        max(hospital_all$Shade[hospital_all$Condition == "Total"], na.rm = TRUE)
-        ), 
-      high = cchmcdarkpurple, 
-      low = cchmcdarkgreen, 
-      mid = cchmclightblue,
-      midpoint = 0,
-      labels = c("Lowest", "", "", "Highest")
-    ) +
-    scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted")) 
-  
 ```
 
 # Schools and Pharmacies
@@ -2591,7 +2650,6 @@ First, a list of Cincinnati Public Schools and their addresses is read in and cl
 ```{r}
 #| warning: false
 #| message: false
-
 schools <- read_delim("cps.txt", delim = " ")
 
 colnames(schools) <- c(LETTERS[1:5], LETTERS[7:13])
@@ -2672,9 +2730,8 @@ schools2 <- schools |>
   mutate(
     Address = paste(Number, Street),
     Type = "School"
-    ) |>
+  ) |>
   select(-c(Street, Number))
-
 ```
 
 ```{r}
@@ -2683,18 +2740,13 @@ schools2 <- schools |>
 head(schools2)
 ```
 
-Next, a list of pharmacies and their addresses is obtained from HPCE Clarity. These are combined with the school addresses for geocoding.
+Next, a list of pharmacies and their addresses is read in. These pharmacies represent those used by CCHMC patients in the past 12 months.
 
 ```{r}
 #| message: false
 #| warning: false
-pharms <- dbGetQuery(con, "
-  SELECT pharmacy_id
-        ,pharmacy_name
-        ,record_state_name
-    FROM hpceclarity.bmi.rx_phr
-    WHERE record_state_name is null or record_state_name = 'Active'
-                     ") 
+library(readxl)
+pharms <- read_excel("pharmacies.xlsx")
 
 to_geocode <- pharms |>
   separate_wider_delim(
@@ -2704,13 +2756,6 @@ to_geocode <- pharms |>
     too_many = "merge",
     too_few = "align_start"
   ) |>
-  separate_wider_delim(
-    name3, 
-    delim = "--", 
-    names = c("name3", "name4", "name5"), 
-    too_few = "align_start",
-    too_many = "merge"
-  ) |>
   mutate(
     name2 = ifelse(name2 == "", name3, name2),
     comma = str_detect(name2, ","),
@@ -2719,56 +2764,83 @@ to_geocode <- pharms |>
   separate_wider_delim(
     city,
     delim = "-",
-    names = c("city", "city2", "city3", "city4", "city5"),
-    too_few = "align_start"
-  ) |>
-  mutate(
-    comma = str_detect(city, ","),
-    city = str_trim(ifelse(comma, city, city2)),
-    comma = str_detect(city, ","),
-    city = case_when(
-      comma ~ city,
-      str_detect(city3, ",") ~ city3,
-      str_detect(city4, ",") ~ city4,
-      str_detect(city5, ",") ~ city5,
-      TRUE ~ city
-    )
-  ) |>
-  filter(str_detect(city, ",")) |>
-  separate_wider_delim(
-    city,
-    delim = ",",
-    names = c("City", "State"),
-    too_many = "drop"
-  ) |>
-  mutate(State = str_trim(State)) |>
-  filter(State %in% c("OH", "IN", "KY")) |>
-  separate_wider_delim(
-    name3,
-    delim = " AT ",
-    names = c("Address", "Address2"),
+    names = c("city", "add", "add2", "add3"),
     too_few = "align_start",
     too_many = "merge"
   ) |>
   mutate(
-    Address = str_trim(Address),
-    num = parse_number(Address),
-    num = as.character(num),
-    added = str_starts(Address, num),
-    Address = ifelse(added, Address, str_trim(name4)),
-    num = as.character(parse_number(Address)),
-    added = str_starts(Address, num),
-    Address = ifelse(is.na(added), str_trim(city2), Address),
-    num = as.character(parse_number(Address)),
-    added = str_starts(Address, num),
-    Address = ifelse(added, Address, str_trim(city3)),
-    num = as.character(parse_number(Address)),
-    added = str_starts(Address, num),
-    Type = "Pharmacy",
-    Zip = NA
+    comma = str_detect(city, ","),
+    city = ifelse(comma, city, str_trim(add)),
+    comma = str_detect(city, ","),
+    city = ifelse(comma, city, str_trim(add2)),
+    comma = str_detect(city, ",")
+    ) |>
+  filter(comma) |>
+  separate_wider_delim(
+    city,
+    delim = ",",
+    names = c("city", "state", "state2", "state3"),
+    too_few = "align_start"
   ) |>
-  filter(added, !is.na(added)) |>
-  select(Name, Address, City, State, Type, Zip) |>
+  mutate(
+    state = case_when(
+      !is.na(state3) ~ state3,
+      !is.na(state2) ~ state2,
+      TRUE ~ state
+    ),
+    state = str_trim(state),
+    length = str_length(state)
+  ) |>
+  filter(
+    length == 2,
+    state %in% c("OH", "KY", "IN")
+  ) |>
+  mutate(
+    add3 = ifelse(str_detect(add3, "NON E-RX"), NA, str_trim(add3))
+  ) |>
+  separate_wider_delim(
+    add2, 
+    names = "add2", 
+    delim = "SUITE", 
+    too_many = "drop"
+    ) |>
+  separate_wider_delim(add3, names = "add3", delim = ",", too_many = "drop") |>
+  separate_wider_delim(add2, names = "add2", delim = " STE", too_many = "drop") |>
+  separate_wider_delim(add2, names = "add2", delim = " ROOM", too_many = "drop") |>
+  separate_wider_delim(add2, names = "add2", delim = " PO ", too_many = "drop") |>
+  separate_wider_delim(add2, names = "add2", delim = " RM ", too_many = "drop") |> 
+  mutate(
+    add2 = str_trim(add2),
+    add = ifelse(
+      str_trunc(add2, 1, "right", ellipsis = "") %in% 1:9 | is.na(add2), 
+      add, 
+      paste(add, add2, sep = " ")
+      ),
+    add2 = ifelse(
+      !str_trunc(add2, 1, "right", ellipsis = "") %in% 1:9, 
+      NA, 
+      add2
+      ),
+    add2 = ifelse(str_length(add2) < 4, NA, add2),
+    add = ifelse(!is.na(add2), NA, str_trim(add)),
+    add = coalesce(add3, add),
+    add = coalesce(add2, add),
+    add = coalesce(add, name3)
+    ) |>
+  separate_wider_delim(add, names = "add", delim = " AT ", too_many = "drop") |>
+  separate_wider_delim(add, names = "add", delim = " STE", too_many = "drop") |>
+  separate_wider_delim(add, names = "add", delim = " SUITE ", too_many = "drop") |>
+  mutate(
+    add = str_trim(add),
+    Zip = NA,
+    Type = "Pharmacy"
+    ) |>
+  select(Name, add, city, state, Zip, Type) |>
+  rename(
+    Address = add,
+    City = city,
+    State = state
+    ) |>
   rbind(schools2)
 ```
 
@@ -2785,7 +2857,7 @@ geocoded_points <- geocode(
   state = State,
   postalcode = Zip,
   method = "census"
-  ) 
+) 
 ```
 
 ```{r}
@@ -2799,6 +2871,7 @@ Because the CCHMC pharmacy address records lack Zip codes, the Census geocoder i
 ```{r}
 #| message = FALSE
 undone <- filter(geocoded_points, is.na(lat)) |>
+  select(-c(lat, long)) |>
   geocode(
     street = Address,
     city = City,
@@ -2813,14 +2886,10 @@ The latitude and longitude coordinates determined by the geocoders are added to 
 ```{r}
 #| message: false
 points_all <- undone |>
-  rename(
-    lat = lat...9,
-    long = long...10
-    ) |>
   select(Name, Type, lat, long, Address) |>
   rbind(select(geocoded_points, Name, lat, long, Type, Address)) |>
   filter(!is.na(lat))
-  
+
 points_all2 <- points_all |>
   st_as_sf(coords = c("long", "lat"), crs = "NAD83") |>
   inner_join(points_all, multiple = "all") |>
@@ -2833,7 +2902,7 @@ cinci_points <- filter(
   points, 
   Municipality %in% c("Cincinnati", "Norwood", "St. Bernard", "Elmwood Place") | 
     Type == "School"
-  )
+)
 ```
 
 # Mapping
@@ -2854,7 +2923,7 @@ map_lines <- muni_lines |>
       value >= .35 ~ "Medium",
       value >= .225 ~ "Lower",
       TRUE ~ "Lowest"
-      ),
+    ),
     Tier = factor(
       Tier, 
       levels = c("Lowest", "Lower", "Medium", "Higher", "Highest")
@@ -2868,20 +2937,20 @@ centroids <- st_coordinates(map_lines$Centroid) |>
   as_tibble() |>
   mutate(
     Neighborhood = map_lines$Neighborhood,
-    X = case_when(
+    X = case_when(#<1>
       Neighborhood == "Sycamore Township" ~ -84.3788,#<1>
       Neighborhood == "Columbia Township" ~ -84.40098,#<1>
       TRUE ~ X#<1>
-      ),#<1>
+    ),
     Y = case_when(#<1>
       Neighborhood == "Sycamore Township" ~ 39.20386,#<1>
       Neighborhood == "Columbia Township" ~ 39.17114,#<1>
       Neighborhood == "East End" ~ 39.122,#<1>
       Neighborhood == "Riverside" ~ 39.07735,#<1>
       TRUE ~ Y#<1>
-      ),#<1>
+    ),
     HoodID = map_lines$HoodID
-    ) |>
+  ) |>
   st_as_sf(coords = c("X", "Y"), crs = "NAD83") |>
   rename(Centroid = geometry)
 
@@ -2892,7 +2961,7 @@ map_lines <- as_tibble(select(map_lines, -Centroid)) |>
 cinci_map_lines <- map_lines |>
   filter(Neighborhood != Municipality |
            Municipality %in% c("Norwood", "St. Bernard", "Elmwood Place")
-         )
+  )
 muni_map_lines <- filter(map_lines, Neighborhood == Municipality)
 ```
 
@@ -2906,7 +2975,6 @@ Next, color palettes for the map and a set of icons for the schools and pharmaci
 library(leaflet)
 cchmclightgreen <- "#A1CA3C"
 cchmclightpurple <- "#CA5699"
-
 pal <- colorFactor(
   c(
     cchmcdarkgreen, 
@@ -2914,7 +2982,7 @@ pal <- colorFactor(
     cchmclightblue, 
     cchmclightpurple, 
     cchmcdarkpurple
-    ), 
+  ), 
   domain = map_lines$Tier
 )
 
@@ -2977,7 +3045,8 @@ city_map <- leaflet() |>
       "Mental health",
       "Schools and pharmacies"
     ),
-    position = "bottomleft"
+    position = "bottomleft",
+    options = layersControlOptions(collapsed = FALSE)
   ) |>
   addCircleMarkers(
     data = cinci_map_lines$Centroid,
@@ -3112,7 +3181,8 @@ muni_map <- leaflet() |>
       "Mental health",
       "Schools and pharmacies"
     ),
-    position = "bottomleft"
+    position = "bottomleft",
+    options = layersControlOptions(collapsed = FALSE)
   ) |>
   addCircleMarkers(
     data = muni_map_lines$Centroid,
@@ -3150,51 +3220,51 @@ muni_map <- leaflet() |>
     popup = popupGraph(hh_popup_muni, height = 300, width = 700),
     group = "Household types"
   ) |>
-  addCircleMarkers(
-    data = muni_map_lines$Centroid,
-    color = cchmcpink,
-    stroke = FALSE,
-    fillOpacity = 1,
-    radius = 4,
-    popup = popupGraph(mobile_popup_muni, height = 300, width = 700),
-    group = "Geographic mobility"
-  ) |>
-  addCircleMarkers(
-    data = muni_map_lines$Centroid,
-    color = cchmcpink,
-    stroke = FALSE,
-    fillOpacity = 1,
-    radius = 4,
-    popup = popupGraph(admit_popup_muni, height = 300, width = 700),
-    group = "Hospital admissions"
-  ) |>
-  addCircleMarkers(
-    data = muni_map_lines$Centroid,
-    color = cchmcpink,
-    stroke = FALSE,
-    fillOpacity = 1,
-    radius = 4,
-    popup = popupGraph(asthma_popup_muni, height = 300, width = 700),
-    group = "Asthma"
-  ) |>
-  addCircleMarkers(
-    data = muni_map_lines$Centroid,
-    color = cchmcpink,
-    stroke = FALSE,
-    fillOpacity = 1,
-    radius = 4,
-    popup = popupGraph(diabetes_popup_muni, height = 300, width = 700),
-    group = "Diabetes"
-  ) |>
-  addCircleMarkers(
-    data = muni_map_lines$Centroid,
-    color = cchmcpink,
-    stroke = FALSE,
-    fillOpacity = 1,
-    radius = 4,
-    popup = popupGraph(mh_popup_muni, height = 300, width = 700),
-    group = "Mental health"
-  ) |>
+  #addCircleMarkers(
+  #  data = muni_map_lines$Centroid,
+ #   color = cchmcpink,
+#    stroke = FALSE,
+    #fillOpacity = 1,
+   # radius = 4,
+   # popup = popupGraph(mobile_popup_muni, height = 300, width = 700),
+  #  group = "Geographic mobility"
+ ## ) |>
+#  addCircleMarkers(
+  #  data = muni_map_lines$Centroid,
+  #  color = cchmcpink,
+  #  stroke = FALSE,
+  #  fillOpacity = 1,
+   # radius = 4,
+  #  popup = popupGraph(admit_popup_muni, height = 300, width = 700),
+ #   group = "Hospital admissions"
+#  ) |>
+  #addCircleMarkers(
+  #  data = muni_map_lines$Centroid,
+  #  color = cchmcpink,
+  #  stroke = FALSE,
+  #  fillOpacity = 1,
+  #  radius = 4,
+  #  popup = popupGraph(asthma_popup_muni, height = 300, width = 700),
+ #   group = "Asthma"
+#  ) |>
+#  addCircleMarkers(
+ #   data = muni_map_lines$Centroid,
+#    color = cchmcpink,
+ #   stroke = FALSE,
+#    fillOpacity = 1,
+#    radius = 4,
+ #   popup = popupGraph(diabetes_popup_muni, height = 300, width = 700),
+#    group = "Diabetes"
+ # ) |>
+#  addCircleMarkers(
+#    data = muni_map_lines$Centroid,
+ #   color = cchmcpink,
+  #  stroke = FALSE,
+   # fillOpacity = 1,
+  #  radius = 4,
+   # popup = popupGraph(mh_popup_muni, height = 300, width = 700),
+  #  group = "Mental health"
+#  ) |>
   addMarkers(
     data = points,
     ~long,

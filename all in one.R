@@ -150,7 +150,7 @@ hood_muni <- rbind(cinci_hood, oki_muni2) |>
 areas <- hood_muni |>
   ungroup() |>
   distinct(County, Municipality, Neighborhood) |>
-  arrange(str_to_title(Neighborhood), County) |> #<1>
+  arrange(str_to_title(Neighborhood), County) |>
   mutate(HoodID = row_number())
 
 pops <- hood_muni |> 
@@ -246,7 +246,8 @@ benchmarks <- function(k){
       Measure = "Mean"
     )
   
-  mins <- select(x, starts_with("Rate")) |>
+  mins <- ungroup(k) |>
+    select(starts_with("Rate")) |>
     summarise(across(everything(), min)) |>
     pivot_longer(cols = everything()) |>
     mutate(
@@ -254,7 +255,8 @@ benchmarks <- function(k){
       Measure = "Min"
     )
   
-  maxes <-select(x, starts_with("Rate")) |>
+  maxes <- ungroup(k) |>
+    select(starts_with("Rate")) |>
     summarise(across(everything(), max)) |>
     pivot_longer(cols = everything()) |>
     mutate(
@@ -335,11 +337,14 @@ demo_graph <- function(k) {
       high = cchmcdarkpurple, 
       low = cchmcdarkgreen, 
       mid = cchmclightblue,
-      labels = c("Lowest", "", "Average", "", "Highest")
+      breaks = waiver(),
+      n.breaks = 3,
+      labels = c("Lowest", "Average", "Highest")
     )
 }
 
 muninums <- areas$HoodID[areas$Neighborhood == areas$Municipality]
+
 hoodnums <- areas$HoodID[areas$Municipality%in% c(
   "Cincinnati", 
   "Norwood", 
@@ -642,7 +647,6 @@ pov <- select(di_meas, ends_with("Poverty")) |>
   ) |>
   select(-c(TotalPoverty, PopPoverty))
 
-
 ins <- select(di_meas, TotalUninsured, PopPopulation) |>
   mutate(
     value = TotalUninsured/PopPopulation,
@@ -742,7 +746,7 @@ di_graph <- function(k){
     )
     x <- x |>
       mutate(across(c(Mean:SD, value, ZScore:Shade), as.numeric))
-  } #<1>
+  } 
   x <- x |>
     mutate(
       name = factor(
@@ -797,7 +801,9 @@ di_graph <- function(k){
       low = cchmcdarkpurple,
       mid = cchmclightblue,
       midpoint = .5,
-      labels = c("Worst", "", "Average", "", "Best")
+      breaks = waiver(),
+      n.breaks = 3,
+      labels = c("Worst", "Average", "Best")
     )
 }
 
@@ -965,7 +971,9 @@ hh_graph <- function(k) {
       high = cchmcdarkpurple, 
       low = cchmcdarkgreen, 
       mid = cchmclightblue,
-      labels = c("Lowest", "", "Average", "", "Highest")
+      breaks = waiver(),
+      n.breaks = 3,
+      labels = c("Lowest", "Average", "Highest")
     )
 } 
 
@@ -1043,7 +1051,9 @@ mobile_graph <- function(k){
       high = cchmcdarkpurple, 
       low = cchmcdarkgreen, 
       mid = cchmclightblue,
-      labels = c("Lowest", "", "Average", "", "Highest")
+      breaks = waiver(),
+      n.breaks = 3,
+      labels = c("Lowest", "Average", "Highest")
     )
 }
 
@@ -1104,7 +1114,7 @@ asthma_exceptions <- dbGetQuery(con, "
       OR edg.code like 'Q24.%'
       OR edg.code like 'Q25.%'
       OR edg.code like 'Q89.3%'
-                                ") |>#<1>
+                                ") |>
   mutate(AsthmaException = 1)
 
 admits <- dbGetQuery(con, "
@@ -1134,58 +1144,58 @@ admits <- dbGetQuery(con, "
   mutate(
     Asthma = ifelse(
       disch_icd_1 %in% c(
-        "J45.21", #<1>
-        "J45.22", #<1>
-        "J45.31", #<1>
-        "J45.32", #<1>
-        "J45.41", #<1>
-        "J45.42", #<1>
-        "J45.51", #<1>
-        "J45.52", #<1>
-        "J45.901", #<1>
-        "J45.902" #<1>
+        "J45.21",
+        "J45.22", 
+        "J45.31", 
+        "J45.32", 
+        "J45.41", 
+        "J45.42", 
+        "J45.51", 
+        "J45.52", 
+        "J45.901", 
+        "J45.902" 
       ),
       1,
       0
-    ),#<1>
+    ),
     Diabetes = ifelse(
       disch_icd_1 %in% c(
-        "E08.10", #<2>
-        "E10.10",#<2>
-        "E10.11",#<2>
-        "E10.65",#<2>
-        "E10.9",#<2>
-        "E11.10",#<2>
-        "E11.649",#<2>
-        "E11.65",#<2>
-        "E11.69",#<2>
-        "E11.9",#<2>
-        "E13.10",#<2>
-        "E13.65",#<2>
-        "E15",#<2>
-        "E16.1",#<2>
-        "E16.2",#<2>
-        "R73.01",#<2>
-        "R73.02",#<2>
-        "R73.03",#<2>
-        "R73.09"#<2>
+        "E08.10", 
+        "E10.10",
+        "E10.11",
+        "E10.65",
+        "E10.9",
+        "E11.10",
+        "E11.649",
+        "E11.65",
+        "E11.69",
+        "E11.9",
+        "E13.10",
+        "E13.65",
+        "E15",
+        "E16.1",
+        "E16.2",
+        "R73.01",
+        "R73.02",
+        "R73.03",
+        "R73.09"
       ),
       1,
       0
     ),
     MH = ifelse(department_id %in% c(
-      20026290, #<3>
-      10401085,	#<3>
-      10401086,	#<3>
-      10401087,	#<3>
-      10401088,	#<3>
-      10401089,	#<3>
-      10401090,	#<3>
-      10401091,	#<3>
-      10401092,	#<3>
-      10401093,	#<3>
-      10401094#<3>
-    ),
+      20026290, 
+      10401085,	
+      10401086,	
+      10401087,	
+      10401088,	
+      10401089,	
+      10401090,	
+      10401091,	
+      10401092,	
+      10401093,	
+      10401094
+    ) | str_starts(disch_icd_1, "F") | str_starts(disch_icd_1, "R45"),
     1,
     0
     )
@@ -1219,46 +1229,46 @@ adds <- inner_join(adds, adds_unique)
 adds_cleaned <- adds_unique |>
   mutate(
     Add1 = case_when(
-      str_detect(add_line_1, "4933 Allen") ~ "4933 Allens Ridge Dr",#<1>
-      str_detect(add_line_1, "4231 Sophia") ~ "4231 Sophias Way",#<1>
-      str_detect(add_line_1, "5583 Jamie") ~ "5583 Jamies Oak Ct",#<1>
-      str_detect(add_line_1, "8681 Harper") ~ "8681 Harpers Point Drive Apt A",#<1>
+      str_detect(add_line_1, "4933 Allen") ~ "4933 Allens Ridge Dr",
+      str_detect(add_line_1, "4231 Sophia") ~ "4231 Sophias Way",
+      str_detect(add_line_1, "5583 Jamie") ~ "5583 Jamies Oak Ct",
+      str_detect(add_line_1, "8681 Harper") ~ "8681 Harpers Point Drive Apt A",
       TRUE ~ add_line_1
     ),
-    Add1 = ifelse(str_starts(Add1, "#"), str_remove(Add1, "#"), Add1),#<2>
-    Add1 = str_trim(str_to_upper(Add1)),#<2>
-    First = str_trunc(Add1, 3, "right", ellipsis = ""),#<2>
-    Add1 = ifelse(is.na(parse_number(First)), "", Add1),#<2>
-    Add1 = ifelse(#<2>
-      str_sub(Add1, 1, 1) %in% LETTERS, #<2>
-      str_sub(Add1, 2, str_length(Add1)), #<2>
-      Add1#<2>
-    ),#<2>
-    Add1 = ifelse(#<2>
-      str_sub(Add1, 1, 1) %in% LETTERS, #<2>
-      str_sub(Add1, 2, str_length(Add1)), #<2>
-      Add1#<2>
-    ),#<2>
+    Add1 = ifelse(str_starts(Add1, "#"), str_remove(Add1, "#"), Add1),
+    Add1 = str_trim(str_to_upper(Add1)),
+    First = str_trunc(Add1, 3, "right", ellipsis = ""),
+    Add1 = ifelse(is.na(parse_number(First)), "", Add1),
+    Add1 = ifelse(
+      str_sub(Add1, 1, 1) %in% LETTERS, 
+      str_sub(Add1, 2, str_length(Add1)), 
+      Add1
+    ),
+    Add1 = ifelse(
+      str_sub(Add1, 1, 1) %in% LETTERS, 
+      str_sub(Add1, 2, str_length(Add1)), 
+      Add1
+    ),
     Add2 = str_trim(str_to_upper(add_line_2)),
     Add2 = coalesce(Add2, ""),
     Address = case_when(
-      str_sub(Add1, 1, 1) %in% 1:9 ~ Add1,#<3>
-      str_sub(Add2, 1, 1) %in% 1:9 ~ Add2,#<3>
-      TRUE ~ NA#<3>
+      str_sub(Add1, 1, 1) %in% 1:9 ~ Add1,
+      str_sub(Add2, 1, 1) %in% 1:9 ~ Add2,
+      TRUE ~ NA
     ),
     City = str_to_title(city),
     Zip = str_trunc(zip, 5, "right", ellipsis = "")
   ) |>
   filter(Address != "") |>
-  separate_wider_delim(#<4>
-    Address, delim = "APT", names = "Address", too_many = "drop"#<4>
-  ) |>#<4>
-  separate_wider_delim(#<4>
-    Address, delim = "#", names = "Address", too_many = "drop"#<4>
-  ) |>#<4>
-  separate_wider_delim(#<4>
-    Address, delim = "UNIT", names = "Address", too_many = "drop"#<4>
-  ) |>#<4>
+  separate_wider_delim(
+    Address, delim = "APT", names = "Address", too_many = "drop"
+  ) |>
+  separate_wider_delim(
+    Address, delim = "#", names = "Address", too_many = "drop"
+  ) |>
+  separate_wider_delim(
+    Address, delim = "UNIT", names = "Address", too_many = "drop"
+  ) |>
   mutate(Address = str_trim(Address))
 
 cleaned_unique <- adds_cleaned |>
@@ -1449,7 +1459,6 @@ hospital_means <- ungroup(hospital_children) |>
   select(Condition, Measure, Mean)
 
 hospital_rates <- ungroup(hospital_children) |>
-  filter(Municipality == Neighborhood) |>
   group_by(Condition, Measure) |>
   summarise(
     Min = min(Rate, na.rm = TRUE),
@@ -1487,8 +1496,8 @@ admit_graph <- function(k){
       ) +
       scale_y_continuous(
         limits = c(0, 73),
-        breaks = seq(0, 70, 10),
-        labels = seq(0, 70, 10)
+        breaks = seq(0, 60, 10),
+        labels = seq(0, 60, 10)
       ) +
       theme_minimal() +
       theme(plot.title = element_text(hjust = .5)) + 
@@ -1515,7 +1524,9 @@ admit_graph <- function(k){
         low = cchmcdarkgreen, 
         mid = cchmclightblue,
         midpoint = 0,
-        labels = c("Lowest", "", "", "Highest")
+        breaks = waiver(),
+        n.breaks = 3,
+        labels = c("Lowest", "", "Highest")
       ) +
       scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted")) 
   }else{
@@ -1555,7 +1566,7 @@ asthma_graph <- function(k){
         Measure, 
         levels = c("Registry", "Admits", "Admitted")
       ),
-      Textloc = ifelse(Rate > 100, Rate-3, Rate+3)
+      Textloc = ifelse(Rate > 100, Rate-5, Rate+5)
     )
   
   if (max(x$Children) > 0){
@@ -1568,8 +1579,8 @@ asthma_graph <- function(k){
         fill = NULL
       ) +
       scale_y_continuous(
-        limits = c(0, 111),
-        breaks = seq(0, 110, 10)
+        limits = c(0, 190),
+        breaks = seq(0, 180, 20)
       ) +
       theme_minimal() +
       theme(plot.title = element_text(hjust = .5)) + 
@@ -1577,7 +1588,7 @@ asthma_graph <- function(k){
       geom_text(
         aes(
           label = ifelse(value > 0, paste("n", value, sep = " = "), ""), 
-          y = ifelse(Rate > 100, Textloc - 5, Textloc + 5)
+          y = ifelse(Rate > 100, Textloc - 10, Textloc + 10)
         ),
         size = 4
       ) +
@@ -1595,7 +1606,10 @@ asthma_graph <- function(k){
         high = cchmcdarkpurple, 
         low = cchmcdarkgreen, 
         mid = cchmclightblue,
-        labels = c("Lowest", rep("", 3), "Highest")
+        midpoint = 0,
+        breaks = waiver(),
+        n.breaks = 3,
+        labels = c("Lowest", "", "Highest")
       ) +
       scale_x_discrete(
         labels = c("Registry", "Admissions", "Patients\nAdmitted")
@@ -1676,7 +1690,10 @@ diabetes_graph <- function(k){
         high = cchmcdarkpurple, 
         low = cchmcdarkgreen, 
         mid = cchmclightblue,
-        labels = c("Lowest", rep("", 4), "Highest")
+        midpoint = 0,
+        breaks = waiver(),
+        n.breaks = 4,
+        labels = c("Lowest", "", "", "Highest")
       ) +
       scale_x_discrete(
         labels = c("Registry", "Admissions", "Patients\nAdmitted")
@@ -1748,7 +1765,10 @@ mh_graph <- function(k){
         high = cchmcdarkpurple, 
         mid = cchmclightblue,
         low = cchmcdarkgreen,
-        labels = c("Lowest", "", "", "Highest")
+        midpoint = 0,
+        breaks = waiver(),
+        n.breaks = 3,
+        labels = c("Lowest", "", "Highest")
       ) +
       scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted"))
   }else{
@@ -1862,13 +1882,7 @@ schools2 <- schools |>
   ) |>
   select(-c(Street, Number))
 
-pharms <- dbGetQuery(con, "
-  SELECT pharmacy_id
-        ,pharmacy_name
-        ,record_state_name
-    FROM hpceclarity.bmi.rx_phr
-    WHERE record_state_name is null or record_state_name = 'Active'
-                     ") 
+pharms <- read_excel("pharmacies.xlsx")
 
 to_geocode <- pharms |>
   separate_wider_delim(
@@ -1878,13 +1892,6 @@ to_geocode <- pharms |>
     too_many = "merge",
     too_few = "align_start"
   ) |>
-  separate_wider_delim(
-    name3, 
-    delim = "--", 
-    names = c("name3", "name4", "name5"), 
-    too_few = "align_start",
-    too_many = "merge"
-  ) |>
   mutate(
     name2 = ifelse(name2 == "", name3, name2),
     comma = str_detect(name2, ","),
@@ -1893,56 +1900,83 @@ to_geocode <- pharms |>
   separate_wider_delim(
     city,
     delim = "-",
-    names = c("city", "city2", "city3", "city4", "city5"),
-    too_few = "align_start"
-  ) |>
-  mutate(
-    comma = str_detect(city, ","),
-    city = str_trim(ifelse(comma, city, city2)),
-    comma = str_detect(city, ","),
-    city = case_when(
-      comma ~ city,
-      str_detect(city3, ",") ~ city3,
-      str_detect(city4, ",") ~ city4,
-      str_detect(city5, ",") ~ city5,
-      TRUE ~ city
-    )
-  ) |>
-  filter(str_detect(city, ",")) |>
-  separate_wider_delim(
-    city,
-    delim = ",",
-    names = c("City", "State"),
-    too_many = "drop"
-  ) |>
-  mutate(State = str_trim(State)) |>
-  filter(State %in% c("OH", "IN", "KY")) |>
-  separate_wider_delim(
-    name3,
-    delim = " AT ",
-    names = c("Address", "Address2"),
+    names = c("city", "add", "add2", "add3"),
     too_few = "align_start",
     too_many = "merge"
   ) |>
   mutate(
-    Address = str_trim(Address),
-    num = parse_number(Address),
-    num = as.character(num),
-    added = str_starts(Address, num),
-    Address = ifelse(added, Address, str_trim(name4)),
-    num = as.character(parse_number(Address)),
-    added = str_starts(Address, num),
-    Address = ifelse(is.na(added), str_trim(city2), Address),
-    num = as.character(parse_number(Address)),
-    added = str_starts(Address, num),
-    Address = ifelse(added, Address, str_trim(city3)),
-    num = as.character(parse_number(Address)),
-    added = str_starts(Address, num),
-    Type = "Pharmacy",
-    Zip = NA
+    comma = str_detect(city, ","),
+    city = ifelse(comma, city, str_trim(add)),
+    comma = str_detect(city, ","),
+    city = ifelse(comma, city, str_trim(add2)),
+    comma = str_detect(city, ",")
+    ) |>
+  filter(comma) |>
+  separate_wider_delim(
+    city,
+    delim = ",",
+    names = c("city", "state", "state2", "state3"),
+    too_few = "align_start"
   ) |>
-  filter(added, !is.na(added)) |>
-  select(Name, Address, City, State, Type, Zip) |>
+  mutate(
+    state = case_when(
+      !is.na(state3) ~ state3,
+      !is.na(state2) ~ state2,
+      TRUE ~ state
+    ),
+    state = str_trim(state),
+    length = str_length(state)
+  ) |>
+  filter(
+    length == 2,
+    state %in% c("OH", "KY", "IN")
+  ) |>
+  mutate(
+    add3 = ifelse(str_detect(add3, "NON E-RX"), NA, str_trim(add3))
+  ) |>
+  separate_wider_delim(
+    add2, 
+    names = "add2", 
+    delim = "SUITE", 
+    too_many = "drop"
+    ) |>
+  separate_wider_delim(add3, names = "add3", delim = ",", too_many = "drop") |>
+  separate_wider_delim(add2, names = "add2", delim = " STE", too_many = "drop") |>
+  separate_wider_delim(add2, names = "add2", delim = " ROOM", too_many = "drop") |>
+  separate_wider_delim(add2, names = "add2", delim = " PO ", too_many = "drop") |>
+  separate_wider_delim(add2, names = "add2", delim = " RM ", too_many = "drop") |> 
+  mutate(
+    add2 = str_trim(add2),
+    add = ifelse(
+      str_trunc(add2, 1, "right", ellipsis = "") %in% 1:9 | is.na(add2), 
+      add, 
+      paste(add, add2, sep = " ")
+      ),
+    add2 = ifelse(
+      !str_trunc(add2, 1, "right", ellipsis = "") %in% 1:9, 
+      NA, 
+      add2
+      ),
+    add2 = ifelse(str_length(add2) < 4, NA, add2),
+    add = ifelse(!is.na(add2), NA, str_trim(add)),
+    add = coalesce(add3, add),
+    add = coalesce(add2, add),
+    add = coalesce(add, name3)
+    ) |>
+  separate_wider_delim(add, names = "add", delim = " AT ", too_many = "drop") |>
+  separate_wider_delim(add, names = "add", delim = " STE", too_many = "drop") |>
+  separate_wider_delim(add, names = "add", delim = " SUITE ", too_many = "drop") |>
+  mutate(
+    add = str_trim(add),
+    Zip = NA,
+    Type = "Pharmacy"
+    ) |>
+  select(Name, add, city, state, Zip, Type) |>
+  rename(
+    Address = add,
+    City = city,
+    State = state
+    ) |>
   rbind(schools2)
 
 geocoded_points <- geocode(
@@ -1955,6 +1989,7 @@ geocoded_points <- geocode(
 ) 
 
 undone <- filter(geocoded_points, is.na(lat)) |>
+  select(-c(lat, long)) |>
   geocode(
     street = Address,
     city = City,
@@ -1964,10 +1999,6 @@ undone <- filter(geocoded_points, is.na(lat)) |>
   )
 
 points_all <- undone |>
-  rename(
-    lat = lat...9,
-    long = long...10
-  ) |>
   select(Name, Type, lat, long, Address) |>
   rbind(select(geocoded_points, Name, lat, long, Type, Address)) |>
   filter(!is.na(lat))
@@ -2015,15 +2046,15 @@ centroids <- st_coordinates(map_lines$Centroid) |>
     X = case_when(
       Neighborhood == "Sycamore Township" ~ -84.3788,
       Neighborhood == "Columbia Township" ~ -84.40098,
-      TRUE ~ X#<1>
-    ),#<1>
-    Y = case_when(#<1>
+      TRUE ~ X
+    ),
+    Y = case_when(
       Neighborhood == "Sycamore Township" ~ 39.20386,
       Neighborhood == "Columbia Township" ~ 39.17114,
       Neighborhood == "East End" ~ 39.122,
       Neighborhood == "Riverside" ~ 39.07735,
       TRUE ~ Y
-    ),#<1>
+    ),
     HoodID = map_lines$HoodID
   ) |>
   st_as_sf(coords = c("X", "Y"), crs = "NAD83") |>
@@ -2037,6 +2068,7 @@ cinci_map_lines <- map_lines |>
   filter(Neighborhood != Municipality |
            Municipality %in% c("Norwood", "St. Bernard", "Elmwood Place")
   )
+
 muni_map_lines <- filter(map_lines, Neighborhood == Municipality)
 
 pal <- colorFactor(
@@ -2319,3 +2351,241 @@ muni_map <- leaflet() |>
   ) 
 
 saveWidget(muni_map, "neighborhood maps/area map.html")
+
+assist_totals <- filter(hood_muni, variable %in% c("B19058_002", "B11012_001")) |>
+  filter(Neighborhood == Municipality) |>
+  mutate(
+    Category = ifelse(variable == "B11012_001", "PopHH", "TotalAssistance")
+  ) |>
+  pivot_wider(
+    id_cols = c(County, Municipality, Neighborhood),
+    names_from = Category,
+    values_from = estimate
+  ) |>
+  rbind(hood_assistance) |>
+  mutate(
+    value = TotalAssistance/PopHH,
+    name = "Assistance"
+  ) |>
+  rename(AssistancePct = value) |>
+  select(County:AssistancePct)
+
+dataset <- inner_join(race, lang) |>
+  inner_join(dep_index |> rename(DI = value) |> select(-name)) |>
+  inner_join(di_meas) |>
+  left_join(assist_totals) |>
+  inner_join(hh) |>
+  inner_join(mobile) |>
+  left_join(hospital) |>
+  left_join(
+    hospital_children |> distinct(County, Municipality, Neighborhood, Children)
+    ) |>
+  left_join(oki_income |> rename(MedianHHIncome = value) |> select(-name)) |>
+  rename(
+    Black = TotalBlack,
+    Hispanic = TotalHispanic,
+    White = TotalWhite,
+    Population = PopPopulation,
+    BlackRate = RateBlack,
+    WhiteRate = RateWhite,
+    HispanicRate = RateHispanic,
+    EnglishNotWell = TotalNotWell,
+    Over5 = PopOver5,
+    OtherThanEnglish = TotalOtherThanEnglish,
+    OtherThanEnglishRate = RateOtherThanEnglish,
+    EnglishNotWellRate = RateNotWell,
+    DeprivationIndex = DI,
+    HSGraduates = TotalNoHighSchool,
+    PovertyFamilies = TotalPoverty,
+    Uninsured = TotalUninsured,
+    VacantHousing = TotalVacant,
+    Over1 = PopMobility,
+    Households = PopHH,
+    Over25 = PopOver25,
+    Families = PopPoverty,
+    HousingUnits = PopHousingUnits,
+    CoupleNoKids = TotalCouple,
+    SingleNoKids = TotalSingle,
+    SingleParentHH = TotalSingleParent,
+    TwoParentHH = TotalTwoParent,
+    CoupleNoKidsRate = RateCouple,
+    SingleNoKidsRate = RateSingle,
+    SingleParentHHRate = RateSingleParent,
+    TwoParentHHRate = RateTwoParent,
+    AbroadLastYear = TotalAbroad,
+    SameMetroLastYear = TotalSameCity,
+    SameHomeLastYear = TotalSameHome,
+    USLastYear = TotalOtherUS,
+    SameHomeRate = RateSameHome,
+    SameMetroRate = RateSameCity,
+    USLastYearRate = RateOtherUS,
+    AbroadLastYearRate = RateAbroad,
+    AsthmaAdmissions = Asthma_Admits,
+    AsthmaPatientsAdmitted = Asthma_Admitted,
+    DiabetesAdmissions = Diabetes_Admits,
+    DiabetesPatientsAdmitted = Diabetes_Admitted,
+    MHAdmissions = MH_Admits,
+    MHPatientsAdmitted = MH_Admitted,
+    HospitalAdmissions = Total_Admits,
+    HospitalPatients = Total_Admitted,
+    AsthmaRegistry = Asthma_Registry,
+    DiabetesRegistry = Diabetes_Registry,
+    AssistanceHH = TotalAssistance,
+    AssistanceRate = AssistancePct
+  ) |>
+  mutate(
+    PovertyRate = PovertyFamilies/Families,
+    UninsuredRate = Uninsured/Population,
+    GraduationRate = HSGraduates/Over25,
+    VacancyRate = VacantHousing/HousingUnits,
+    HospitalAdmissionRate = 100*HospitalAdmissions/Children,
+    HospitalPatientRate = 100*HospitalPatients/Children,
+    AsthmaAdmissionRate = 100*AsthmaAdmissions/Children,
+    AsthmaPatientRate = 100*AsthmaPatientsAdmitted/Children,
+    AsthmaRegistryRate = 100*AsthmaRegistry/Children,
+    DiabetesAdmissionRate = 100*DiabetesAdmissions/Children,
+    DiabetesPatientRate = 100*DiabetesPatientsAdmitted/Children,
+    DiabetesRegistryRate = 100*DiabetesRegistry/Children,
+    MHAdmissionRate = 100*MHAdmissions/Children,
+    MHPatientRate = 100*MHPatientsAdmitted/Children
+    ) |>
+  select(
+    County:Neighborhood,
+    Population,
+    Households,
+    Families,
+    HousingUnits,
+    Children,
+    Over1,
+    Over5,
+    Over25,
+    White,
+    WhiteRate,
+    Black,
+    BlackRate,
+    Hispanic,
+    HispanicRate,
+    OtherThanEnglish,
+    OtherThanEnglishRate,
+    EnglishNotWell,
+    EnglishNotWellRate,
+    DeprivationIndex,
+    PovertyFamilies,
+    PovertyRate,
+    AssistanceHH,
+    AssistanceRate,
+    MedianHHIncome,
+    Uninsured,
+    UninsuredRate,
+    HSGraduates,
+    GraduationRate,
+    VacantHousing,
+    VacancyRate,
+    TwoParentHH,
+    TwoParentHHRate, 
+    SingleParentHH,
+    SingleParentHHRate,
+    CoupleNoKids,
+    CoupleNoKidsRate,
+    SingleNoKids,
+    SingleNoKidsRate,
+    SameHomeLastYear,
+    SameHomeRate,
+    SameMetroLastYear,
+    SameMetroRate,
+    USLastYear,
+    USLastYearRate,
+    AbroadLastYear,
+    AbroadLastYearRate,
+    HospitalAdmissions,
+    HospitalAdmissionRate,
+    HospitalPatients,
+    HospitalPatientRate,
+    AsthmaRegistry,
+    AsthmaRegistryRate,
+    AsthmaAdmissions,
+    AsthmaAdmissionRate,
+    AsthmaPatientsAdmitted,
+    AsthmaPatientRate,
+    DiabetesRegistry,
+    DiabetesRegistryRate,
+    DiabetesAdmissions,
+    DiabetesAdmissionRate,
+    DiabetesPatientsAdmitted,
+    DiabetesPatientRate,
+    MHAdmissions,
+    MHAdmissionRate,
+    MHPatientsAdmitted,
+    MHPatientRate
+  ) |>
+  mutate(
+    across(
+      c(
+        Population:White, 
+        Black, 
+        Hispanic, 
+        OtherThanEnglish, 
+        EnglishNotWell,
+        PovertyFamilies,
+        AssistanceHH,
+        MedianHHIncome,
+        Uninsured,
+        HSGraduates,
+        VacantHousing,
+        TwoParentHH,
+        SingleParentHH,
+        CoupleNoKids,
+        SingleNoKids,
+        SameHomeLastYear,
+        SameMetroLastYear,
+        USLastYear,
+        AbroadLastYear
+        ),
+      \(x) round(x, 0)
+      ),
+    across(
+      c(
+        WhiteRate,
+        BlackRate,
+        HispanicRate,
+        OtherThanEnglishRate,
+        EnglishNotWellRate,
+        DeprivationIndex,
+        PovertyRate,
+        AssistanceRate,
+        UninsuredRate,
+        GraduationRate,
+        VacancyRate,
+        TwoParentHHRate,
+        SingleParentHHRate,
+        CoupleNoKidsRate,
+        SingleNoKidsRate,
+        SameHomeRate,
+        SameMetroRate,
+        USLastYearRate,
+        AbroadLastYearRate
+      ),
+      \(x) round(x, 3)
+      ),
+    across(
+      c(
+        HospitalAdmissionRate,
+        HospitalPatientRate,
+        AsthmaRegistryRate,
+        AsthmaAdmissionRate,
+        AsthmaPatientRate,
+        DiabetesRegistryRate,
+        DiabetesAdmissionRate,
+        DiabetesPatientRate,
+        MHAdmissionRate,
+        MHPatientRate
+      ),
+      \(x) round(x, 1)
+      )
+    )
+
+write_csv(dataset, "neighborhood maps/Neighborhood dataset.csv")
+
+agedata <- select(pyramid, County:Population, Share) |>
+  rename(Pct = Share)
+write_csv(agedata, "neighborhood maps/Neighborhood Age and Gender.csv")
