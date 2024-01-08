@@ -39,15 +39,16 @@ bg_var_list <-c(
   paste0("B27010_0", c(17, 33, 50, 66))
 )
 
-bg_vars <- load_variables("acs5", year = 2021) |>
-  filter(name %in% bg_var_list)
+bg_vars <- load_variables("acs5", year = 2022) |>
+  filter(name %in% bg_var_list) 
 
 oh_muni <- get_acs(
   geography = "county subdivision",
   variables = c(bg_var_list, "B19058_002"),
   county = c("Hamilton", "Clermont", "Butler", "Warren"),
   state = "OH",
-  geometry = TRUE#<1>
+  year = 2022,
+  geometry = TRUE
 ) 
 
 ky_muni <- get_acs(
@@ -55,6 +56,7 @@ ky_muni <- get_acs(
   variables = c(bg_var_list, "B19058_002"),
   county = c("Boone", "Campbell", "Kenton"),
   state = "KY",
+  year = 2022,
   geometry = TRUE
 ) 
 
@@ -63,6 +65,7 @@ in_muni <- get_acs(
   variables = c(bg_var_list, "B19058_002"),
   county = "Dearborn",
   state = "IN",
+  year = 2022,
   geometry = TRUE
 ) 
 
@@ -84,17 +87,17 @@ oki_muni <- rbind(oh_muni, ky_muni) |>
   select(-State)
 
 oki_muni2 <- as_tibble(oki_muni) |>
-  filter(variable != "B19049_001") |> #<1>
+  filter(variable != "B19049_001") |> 
   mutate(County = case_when(
     Municipality == "Loveland" ~ "Hamilton",
     Municipality == "Milford" ~ "Clermont",
     Municipality == "Fairfield" ~ "Butler",
     TRUE ~ County
-  )
+    )
   ) |> 
   select(Municipality:estimate) |>
   left_join(bg_vars, by = c("variable" = "name")) |>
-  group_by(Municipality, County, variable, label, concept) |> #<2>
+  group_by(Municipality, County, variable, label, concept) |>
   summarise(estimate = sum(estimate)) |>
   mutate(Neighborhood = Municipality) |>
   ungroup()
@@ -121,7 +124,8 @@ hamco_bg <- get_acs(
   geography = "block group",
   variables = bg_var_list,
   county = "Hamilton",
-  state = "OH"
+  state = "OH",
+  year = 2022
 ) |>
   inner_join(bg_vars, by = c("variable" = "name"))
 
@@ -156,16 +160,16 @@ areas <- hood_muni |>
 pops <- hood_muni |> 
   filter(
     str_ends(variable, "_001"),
-    str_detect(concept, "INCOME", negate = TRUE)
+    str_detect(concept, "Income", negate = TRUE)
   ) |>
   mutate(
     Measure = case_when(
-      str_starts(concept, "SEX") ~ "Population",
-      str_starts(concept, "GEOGRAPHICAL") ~ "Mobility",
-      str_starts(concept, "HOUSEHOLDS") ~ "HH",
-      str_starts(concept, "EDUCATIONAL") ~ "Over25",
-      str_starts(concept, "AGE") ~ "Over5",
-      str_starts(concept, "POVERTY") ~ "Poverty",
+      str_starts(concept, "Sex") ~ "Population",
+      str_starts(concept, "Geographical") ~ "Mobility",
+      str_starts(concept, "Households") ~ "HH",
+      str_starts(concept, "Educational") ~ "Over25",
+      str_starts(concept, "Age") ~ "Over5",
+      str_starts(concept, "Poverty") ~ "Poverty",
       TRUE ~ "HousingUnits"
     )
   ) |>
@@ -176,7 +180,7 @@ pops <- hood_muni |>
     values_from = estimate
   )
 
-race <- filter(hood_muni, str_detect(concept, "RACE")) |>
+race <- filter(hood_muni, str_detect(concept, "Race")) |>
   mutate(
     Race = case_when(
       str_detect(Group2, "White") ~ "White",
@@ -202,7 +206,7 @@ race <- filter(hood_muni, str_detect(concept, "RACE")) |>
   ) |>
   select(County: PopPopulation, RateBlack:RateHispanic)
 
-lang <- filter(hood_muni, str_detect(concept, "LANGUAGE")) |>
+lang <- filter(hood_muni, str_detect(concept, "Language")) |>
   mutate(
     Language = case_when(
       is.na(Group2) ~ "Total",
@@ -361,7 +365,7 @@ demo_popup_hood <- lapply((hoodnums), function(k) {
 })
 
 di <- read.csv(
-  "deprivation index all tracts 2021.csv",
+  "deprivation index all tracts 2022.csv",
   colClasses = c("numeric", "character", rep("NULL", 6))
 )
 
@@ -385,7 +389,7 @@ oh_tract <- get_acs(
   variables = "B01001_001",
   state = "OH",
   county = c("Clermont", "Warren", "Butler", "Hamilton"),
-  year = 2021
+  year = 2022
 )
 
 ky_tract <- get_acs(
@@ -393,15 +397,15 @@ ky_tract <- get_acs(
   variables = "B01001_001",
   state = "KY",
   county = c("Kenton", "Campbell", "Boone"),
-  year = 2021
+  year = 2022
 )
 
 in_tract <- get_acs(
   geography = "tract",
   variables = "B01001_001",
   state = "IN",
-  county = c("Dearborn"),
-  year = 2021
+  county = "Dearborn",
+  year = 2022
 )
 
 oki <- read.csv(
@@ -624,9 +628,9 @@ di_meas <- hood_muni |>
            str_detect(variable, "B27010")) |>
   mutate(
     Category = case_when(
-      str_starts(concept, "EDUCATIONAL") ~ "NoHighSchool",
-      str_starts(concept, "POVERTY") ~ "Poverty",
-      str_starts(concept, "OCCUPANCY") ~ "Vacant",
+      str_starts(concept, "Educational") ~ "NoHighSchool",
+      str_starts(concept, "Poverty") ~ "Poverty",
+      str_starts(concept, "Occupancy") ~ "Vacant",
       TRUE ~ "Uninsured"
     )
   ) |>
