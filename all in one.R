@@ -702,7 +702,7 @@ digraph_rates <- function(k, var){
 }
 
 di_rates <- digraph_rates(dep_index, "B01001_001") |>
-  mutate(Shade = -(Scale-1))#<2>
+  mutate(Shade = -(Scale-1))
 
 income_rates <- digraph_rates(oki_income, "B11012_001") |>
   mutate(Shade = Scale)
@@ -819,7 +819,7 @@ di_popup_hood <- lapply((hoodnums), function(k) {
   di_graph(k)
 })
 
-pyramid <- filter(hood_muni, concept == "SEX BY AGE") |>
+pyramid <- filter(hood_muni, concept == "Sex by Age") |>
   ungroup() |>
   filter(!is.na(Group3)) |>
   rename(Gender = Group2) |>
@@ -1082,6 +1082,16 @@ registry <- dbGetQuery(con, "
 				        ,p.county
 				        ,c.registry_id
 				        ,c.registry_name
+				        ,g.x
+				        ,g.y
+				        ,g.foster
+				        ,g.rmh
+				        ,g.pobox
+				        ,g.cchmc
+				        ,g.stjoe
+				        ,g.unknown_address
+				        ,g.foreign_address
+				        ,g.geocode_attempted
   FROM hpceclarity.bmi.registry_config c
     INNER JOIN hpceclarity.bmi.reg_data_hx_membership m
       ON c.registry_id = m.registry_id
@@ -1089,9 +1099,23 @@ registry <- dbGetQuery(con, "
       ON m.record_id = d.record_id
     INNER JOIN hpceclarity.bmi.patient p
       ON p.pat_id = d.networked_id
+    LEFT JOIN temptable.dbo.full_list_geocode g
+      ON (p.add_line_1 = g.add_line_1 
+          OR (p.add_line_1 IS NULL AND g.add_line_1 IS NULL))
+        AND (p.add_line_2 = g.add_line_2 
+          OR (p.add_line_2 IS NULL AND g.add_line_2 IS NULL))
+        AND (p.city = g.city OR (p.city IS NULL AND g.city IS NULL))
+        AND (p.state = g.state OR (p.state IS NULL AND g.state IS NULL))
+        AND (p.zip = g. zip OR (p.zip IS NULL AND g.zip IS NULL))
   WHERE (c.registry_name LIKE '%asthma%' OR c.registry_id = '210652454')
     AND p.add_line_1 NOT LIKE '%222 E%'
     AND m.status_c = 1
+    AND g.foster IS NOT 'TRUE'
+    AND g.rmn IS NOT 'TRUE'
+    AND g.pobox IS NOT 'TRUE'
+    AND g.cchmc IS NOT 'TRUE'
+    AND g.stjoe IS NOT 'TRUE'
+    AND g.unknown_address I
                   ") |>
   mutate(
     asthma_admission = 0,
@@ -1099,7 +1123,16 @@ registry <- dbGetQuery(con, "
     mental_health_admission = 0,
     county = str_to_title(county),
     contact_date = today()
-  ) 
+  ) |>
+  filter(
+    foster != TRUE,
+    rmh != TRUE,
+    pobox != TRUE,
+    cchmc != TRUE,
+    stjoe != TRUE,
+    unknown_address != TRUE
+    
+  )
 
 asthma_exceptions <- dbGetQuery(con, "
   SELECT DISTINCT ha.hsp_account_id
@@ -1137,12 +1170,22 @@ admits <- dbGetQuery(con, "
 		              ,r.adt_pat_class
 		              ,department_id
 		              ,department_name
+		              ,g.x
+		              ,g.y
   FROM hpceclarity.bmi.readmissions r
 		INNER JOIN hpceclarity.dbo.chmc_adt_addr_hx a
 		  ON r.pat_id = a.pat_id
+		LEFT JOIN temptable.dbo.full_list_geocode g
+		  ON (a.addr_hx_line1 = g.add_line_1 
+		      OR (a.addr_hx_line1 IS NULL AND g.add_line_1 IS NULL))
+		    AND (a.addr_hx_line2 = g.add_line_2 
+		        OR (a.addr_hx_line2 IS NULL AND g.add_line_2 IS NULL))
+		    AND (a.city_hx = g.city OR (a.city_hx IS NULL AND g.city IS NULL))
+		    AND (a.state = g.state OR (a.state IS NULL AND g.state IS NULL))
+		    AND (a.zip_hx = g.zip OR (a.zip_hx IS NULL AND g.zip IS NULL))
   WHERE r.hosp_admsn_time >= a.eff_start_date
 		AND (a.eff_end_date IS NULL OR r.hosp_admsn_time < a.eff_end_date)
-		AND year(r.hosp_admsn_time) = 2022
+		AND year(r.hosp_admsn_time) in ('2022', '2023')
 		AND a.state IN ('Ohio', 'Indiana', 'Kentucky')
                      ") |>
   mutate(
@@ -1237,6 +1280,7 @@ adds_cleaned <- adds_unique |>
       str_detect(add_line_1, "4231 Sophia") ~ "4231 Sophias Way",
       str_detect(add_line_1, "5583 Jamie") ~ "5583 Jamies Oak Ct",
       str_detect(add_line_1, "8681 Harper") ~ "8681 Harpers Point Drive Apt A",
+      str_detect(add_line_1, "1396 Alexa") ~ "1396 Alexas Way",
       TRUE ~ add_line_1
     ),
     Add1 = ifelse(str_starts(Add1, "#"), str_remove(Add1, "#"), Add1),
