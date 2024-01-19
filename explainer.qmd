@@ -2052,6 +2052,7 @@ With that, the data set is ready for graphing. The four plots for asthma, diabet
 
 ```{r}
 #| echo: false
+#| message: false
 library(cowplot)
 admit_graph <- function(k){
   x <- hospital_all |>
@@ -2295,6 +2296,7 @@ admit_popup_hood[[36]]
 
 ```{r}
 #| echo: false
+#| warning: false
 library(glue)
 registry_graph <- function(k){
   x <- hospital_all |>
