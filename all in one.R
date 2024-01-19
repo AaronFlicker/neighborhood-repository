@@ -698,7 +698,7 @@ digraph_rates <- function(k, var){
         ZScore > 0, 
         ((ZScore/max(ZScore))+1)/2, 
         (-ZScore/min(ZScore)+1)/2
-      ),#<1>
+      ),
       Textloc = ifelse(Scale > .9, Scale - .025, Scale + .04)
     )
 }
@@ -1619,7 +1619,7 @@ admit_graph <- function(k){
     ) |>
     mutate(
       Measure = factor(Measure, levels = c("Admits", "Admitted")),
-      Textloc = ifelse(Rate > 15, Rate-1, Rate+1)
+      Textloc = ifelse(Rate > 13, Rate - 1.5, Rate + 1.5)
     )
   
   shadelimits <- c(
@@ -1646,7 +1646,7 @@ admit_graph <- function(k){
             paste("n =", format(value, big.mark = ","), "per year"), 
             ""
             ), 
-          y = ifelse(Rate > 15, Textloc - 1, Textloc + 1)
+          y = ifelse(Rate > 13, Textloc - 2, Textloc + 2)
         ),
         size = 4
       ) +
@@ -1662,14 +1662,6 @@ admit_graph <- function(k){
       scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted")) 
 }
 
-# admit_popup_muni <- lapply((muninums), function(k) {
-#   admit_graph(k)
-# })
-# 
-# admit_popup_hood <- lapply((hoodnums), function(k) {
-#   admit_graph(k)
-# })
-
 asthma_admit_graph <- function(k){
   x <- hospital_all |>
     filter(
@@ -1679,7 +1671,7 @@ asthma_admit_graph <- function(k){
       ) |>
     mutate(
       Measure = factor(Measure, levels = c("Admits", "Admitted")),
-      Textloc = ifelse(Rate > 2.5, Rate - .1, Rate + .1)
+      Textloc = ifelse(Rate > 2.5, Rate - .2, Rate + .2)
     )
   
   shadelimits <- c(
@@ -1705,6 +1697,17 @@ asthma_admit_graph <- function(k){
     theme_minimal() +
     theme(plot.title = element_text(hjust = .5)) + 
     geom_text(aes(label = round(Rate, 1), y = Textloc), size = 4) +
+    geom_text(
+      aes(
+        label = ifelse(
+          value > 0, 
+          paste("n =", format(value, big.mark = ","), "per year"), 
+          ""
+        ), 
+        y = ifelse(Rate > 2.5, Textloc - .3, Textloc + .3)
+      ),
+      size = 4
+    ) +
     scale_fill_gradient2(
       limits = shadelimits, 
       high = cchmcdarkpurple, 
@@ -1717,14 +1720,6 @@ asthma_admit_graph <- function(k){
     scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted"))
 }
 
-# asthma_popup_muni <- lapply((muninums), function(k) {
-#   asthma_graph(k)
-# })
-# 
-# asthma_popup_hood <- lapply((hoodnums), function(k) {
-#   asthma_graph(k)
-# })
-
 diabetes_admit_graph <- function(k){
   x <- hospital_all |>
     filter(
@@ -1734,7 +1729,7 @@ diabetes_admit_graph <- function(k){
       ) |>
     mutate(
       Measure = factor(Measure, levels = c("Admits", "Admitted")),
-      Textloc = ifelse(Rate > 4, Rate - .2, Rate + .2)
+      Textloc = ifelse(Rate > 4, Rate - .3, Rate + .3)
     )
   
   shadelimits <- c(
@@ -1763,7 +1758,7 @@ diabetes_admit_graph <- function(k){
       geom_text(
         aes(
           label = ifelse(value > 0, paste("n =", value, "per year"), ""), 
-          y = ifelse(Rate > 4, Textloc - .25, Textloc + .25)
+          y = ifelse(Rate > 4, Textloc - .4, Textloc + .4)
         ),
         size = 4
       ) +
@@ -1779,14 +1774,6 @@ diabetes_admit_graph <- function(k){
       scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted"))
 }
 
-# diabetes_popup_muni <- lapply((muninums), function(k) {
-#   diabetes_graph(k)
-# })
-# 
-# diabetes_popup_hood <- lapply((hoodnums), function(k) {
-#   diabetes_graph(k)
-# })
-
 mh_graph <- function(k){
   x <- hospital_all |>
     filter(
@@ -1795,12 +1782,12 @@ mh_graph <- function(k){
       ) |>
     mutate(
       Measure = factor(Measure, levels = c("Admits", "Admitted")),
-      Textloc = ifelse(Rate > 3, Rate - .2, Rate + .2)
+      Textloc = ifelse(Rate > 3, Rate - .3, Rate + .3)
     )
   
   shadelimits <- c(
-    min(hospital_all$Shade[hospital_all$Condition == "MH"], na.rm = TRUE),
-    max(hospital_all$Shade[hospital_all$Condition == "MH"], na.rm = TRUE)
+    min(hospital_all$Shade[hospital_all$Condition == "MH"]),
+    max(hospital_all$Shade[hospital_all$Condition == "MH"])
     )
   
   ggplot(x, aes(x = Measure, y = Rate, fill = Shade)) +
@@ -1818,7 +1805,7 @@ mh_graph <- function(k){
     geom_text(
       aes(
         label = ifelse(value > 0, paste("n =", value, "per year"), ""), 
-        y = ifelse(Rate > 3, Textloc - .2, Textloc + .2)
+        y = ifelse(Rate > 3, Textloc - .4, Textloc + .4)
         ),
       size = 4
       ) +
@@ -1833,14 +1820,6 @@ mh_graph <- function(k){
       ) +
     scale_x_discrete(labels = c("Admissions", "Patients\nAdmitted"))
 }
-
-# mh_popup_muni <- lapply((muninums), function(k) {
-#   mh_graph(k)
-# })
-# 
-# mh_popup_hood <- lapply((hoodnums), function(k) {
-#   mh_graph(k)
-# })
 
 admit_grid <- function(k){
   p1 <- admit_graph(k) + theme(legend.position = "none")
@@ -1860,6 +1839,61 @@ admit_popup_muni <- lapply((muninums), function(k) {
 
 admit_popup_hood <- lapply((hoodnums), function(k) {
   admit_grid(k)
+})
+
+registry_graph <- function(k){
+  x <- hospital_all |>
+    filter(
+      Measure == "Registry",
+      HoodID == k
+      ) |>
+    mutate(Textloc = ifelse(Rate > 38, Rate - 1, Rate + 1))
+  
+  shadelimits <- c(
+    min(hospital_all$Shade[hospital_all$Measure == "Registry"]),
+    max(hospital_all$Shade[hospital_all$Condition == "MH"])
+  )
+  
+  ggplot(x, aes(x = Condition, y = Rate, fill = Shade)) +
+    geom_bar(stat = "identity", color = "black") +
+    labs(
+      x = NULL, 
+      y = glue("Per 100 children (as of ", {format(today(), "%b %d, %Y")}, ")"), 
+      title = unique(x$Neighborhood),
+      fill = NULL
+    ) +
+    scale_y_continuous(limits = c(0, 40)) +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = .5)) + 
+    geom_text(aes(label = round(Rate, 1), y = Textloc), size = 4) +
+    geom_text(
+      aes(
+        label = ifelse(
+          value > 0, 
+          paste("n =", format(value, big.mark = ",")), 
+          ""
+          ), 
+        y = ifelse(Rate > 38, Textloc - 2, Textloc + 2)
+      ),
+      size = 4
+    ) +
+    scale_fill_gradient2(
+      limits = shadelimits, 
+      high = cchmcdarkpurple, 
+      mid = cchmclightblue,
+      low = cchmcdarkgreen,
+      midpoint = 0,
+      breaks = sort(c(shadelimits, mean(shadelimits))),
+      labels = c("Lowest", "", "Highest")
+    )
+}
+
+registry_popup_muni <- lapply((muninums), function(k){
+  registry_graph(k)
+})
+
+registry_popup_hood <- lapply((hoodnums), function(k){
+  registry_graph(k)
 })
 
 schools <- read_delim("cps.txt", delim = " ")
@@ -2190,9 +2224,7 @@ city_map <- leaflet() |>
       "Household types",
       "Geographic mobility",
       "Hospital admissions",
-      "Asthma",
-      "Diabetes",
-      "Mental health",
+      "Medical registries",
       "Schools and pharmacies"
     ),
     position = "bottomleft",
@@ -2249,7 +2281,7 @@ city_map <- leaflet() |>
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
-    popup = popupGraph(admit_popup_hood, height = 300, width = 700),
+    popup = popupGraph(admit_popup_hood, height = 500, width = 700),
     group = "Hospital admissions"
   ) |>
   addCircleMarkers(
@@ -2258,26 +2290,8 @@ city_map <- leaflet() |>
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
-    popup = popupGraph(asthma_popup_hood, height = 300, width = 700),
-    group = "Asthma"
-  ) |>
-  addCircleMarkers(
-    data = cinci_map_lines$Centroid,
-    color = cchmcpink,
-    stroke = FALSE,
-    fillOpacity = 1,
-    radius = 4,
-    popup = popupGraph(diabetes_popup_hood, height = 300, width = 700),
-    group = "Diabetes"
-  ) |>
-  addCircleMarkers(
-    data = cinci_map_lines$Centroid,
-    color = cchmcpink,
-    stroke = FALSE,
-    fillOpacity = 1,
-    radius = 4,
-    popup = popupGraph(mh_popup_hood, height = 300, width = 700),
-    group = "Mental health"
+    popup = popupGraph(registry_popup_hood, height = 300, width = 600),
+    group = "Health registries"
   ) |>
   addMarkers(
     data = cinci_points,
@@ -2315,9 +2329,7 @@ muni_map <- leaflet() |>
       "Household types",
       "Geographic mobility",
       "Hospital admissions",
-      "Asthma",
-      "Diabetes",
-      "Mental health",
+      "Medical registries",
       "Schools and pharmacies"
     ),
     position = "bottomleft",
@@ -2374,7 +2386,7 @@ muni_map <- leaflet() |>
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
-    popup = popupGraph(admit_popup_muni, height = 300, width = 700),
+    popup = popupGraph(admit_popup_muni, height = 500, width = 700),
     group = "Hospital admissions"
   ) |>
   addCircleMarkers(
@@ -2383,26 +2395,8 @@ muni_map <- leaflet() |>
     stroke = FALSE,
     fillOpacity = 1,
     radius = 4,
-    popup = popupGraph(asthma_popup_muni, height = 300, width = 700),
-    group = "Asthma"
-  ) |>
-  addCircleMarkers(
-    data = muni_map_lines$Centroid,
-    color = cchmcpink,
-    stroke = FALSE,
-    fillOpacity = 1,
-    radius = 4,
-    popup = popupGraph(diabetes_popup_muni, height = 300, width = 700),
-    group = "Diabetes"
-  ) |>
-  addCircleMarkers(
-    data = muni_map_lines$Centroid,
-    color = cchmcpink,
-    stroke = FALSE,
-    fillOpacity = 1,
-    radius = 4,
-    popup = popupGraph(mh_popup_muni, height = 300, width = 700),
-    group = "Mental health"
+    popup = popupGraph(registry_popup_muni, height = 300, width = 700),
+    group = "Medical registries"
   ) |>
   addMarkers(
     data = points,
